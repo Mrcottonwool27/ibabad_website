@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { supabase } from './supabaseClient.js';
 import {
   Target, Zap, Wallet, Bell, Info, X, Shuffle, Swords,
   ShieldOff, Trophy, TrendingUp, CheckCircle2, AlertCircle,
@@ -47,6 +48,14 @@ const MIN_POWER = 50;
 
 const DEFAULT_COURT_FEE = 70;    // บาทต่อคอร์ทต่อเกม
 const DEFAULT_SHUTTLE_PRICE = 25; // บาทต่อลูก
+
+// เก็บ/ซิงค์ข้อมูลผ่าน Supabase (ฐานข้อมูลออนไลน์) แทน localStorage
+// ทุกอุปกรณ์ที่เปิดแอปนี้จะอ่าน/เขียนแถวเดียวกันในตาราง app_state ทำให้เห็นข้อมูลตรงกันแบบเกือบเรียลไทม์
+// (ดึงข้อมูลใหม่ทุก ~5 วินาที + บันทึกทันทีเมื่อมีการแก้ไขในเครื่องนี้)
+const APP_STATE_ROW_ID = 1;
+const POLL_INTERVAL_MS = 5000;
+const SAVE_DEBOUNCE_MS = 800;
+const RECENT_LOCAL_WRITE_GUARD_MS = 2500; // กันไม่ให้ผลโพลไปทับข้อมูลที่เพิ่งเขียนไปเองสดๆ
 
 const initialPlayers = [
   { id: 1, name: "P", cls: "P", gender: "M", played: 14, w: 11, l: 3, avatar: "🎩", bestDuo: "New", rival: "DREAM", weapon: "Yonex Nanoflare", blocked: [], isVeteran: false },
@@ -1854,6 +1863,113 @@ export default function IbabadApp() {
   const [attendance, setAttendance] = useState({}); // { [playerId]: { [dayKey]: true } } — นับเข้าร่วมสูงสุด 1 แต้ม/วัน
   const [dailyPrices, setDailyPrices] = useState({}); // { [dayKey]: { courtFee, shuttlePrice } } — ราคาล็อกตามวัน แก้วันนี้ไม่กระทบวันก่อนหน้า
 
+  const [isSynced, setIsSynced] = useState(false); // โหลดข้อมูลจาก Supabase รอบแรกเสร็จหรือยัง
+  const [syncError, setSyncError] = useState(null);
+  const isApplyingRemote = useRef(false);   // true ระหว่างที่กำลังเอาข้อมูลจากเซิร์ฟเวอร์มาใส่ state (กันไม่ให้เขียนวนกลับไป)
+  const lastLocalWriteAt = useRef(0);       // เวลาที่เครื่องนี้เขียนขึ้นเซิร์ฟเวอร์ล่าสุด (กันโพลทับข้อมูลสดๆ ของตัวเอง)
+  const lastKnownUpdatedAt = useRef(null);  // updated_at ล่าสุดที่เครื่องนี้รู้ (เทียบว่าของเซิร์ฟเวอร์ใหม่กว่าไหม)
+  const saveTimer = useRef(null);
+
+  const collectStateForSync = () => ({
+    appPassword, players, courts, matchRecords, paidMap,
+    checkedInIds, restingIds, attendance, dailyPrices,
+  });
+
+  const applyRemoteState = (data) => {
+    isApplyingRemote.current = true;
+    if (data.appPassword !== undefined) setAppPassword(data.appPassword);
+    if (data.players !== undefined) setPlayers(data.players);
+    if (data.courts !== undefined) setCourts(data.courts);
+    if (data.matchRecords !== undefined) setMatchRecords(data.matchRecords);
+    if (data.paidMap !== undefined) setPaidMap(data.paidMap);
+    if (data.checkedInIds !== undefined) setCheckedInIds(data.checkedInIds);
+    if (data.restingIds !== undefined) setRestingIds(data.restingIds);
+    if (data.attendance !== undefined) setAttendance(data.attendance);
+    if (data.dailyPrices !== undefined) setDailyPrices(data.dailyPrices);
+  };
+
+  // โหลดข้อมูลจาก Supabase ตอนเปิดแอปครั้งแรก (ถ้ายังไม่เคยมีแถวข้อมูลเลย จะสร้างแถวเริ่มต้นให้)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('app_state')
+        .select('data, updated_at')
+        .eq('id', APP_STATE_ROW_ID)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        setSyncError('เชื่อมต่อฐานข้อมูลไม่ได้ — ตรวจสอบการตั้งค่า Supabase (ดู src/supabaseClient.js)');
+        setIsSynced(true);
+        return;
+      }
+      if (data) {
+        applyRemoteState(data.data || {});
+        lastKnownUpdatedAt.current = data.updated_at;
+      } else {
+        // ยังไม่เคยมีแถวข้อมูล — สร้างแถวแรกด้วยค่าเริ่มต้นของแอป
+        const initial = { appPassword: DEFAULT_PASSWORD, players: initialPlayers, courts: [
+          { id: 'c1', name: 'สนาม 1', status: 'waiting', players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all' },
+          { id: 'c2', name: 'สนาม 2', status: 'waiting', players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all' },
+          { id: 'c3', name: 'สนาม 3', status: 'waiting', players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all' },
+        ], matchRecords: [], paidMap: {}, checkedInIds: [], restingIds: [], attendance: {}, dailyPrices: {} };
+        const { data: inserted } = await supabase
+          .from('app_state')
+          .insert({ id: APP_STATE_ROW_ID, data: initial, updated_at: new Date().toISOString() })
+          .select('data, updated_at')
+          .single();
+        if (inserted) lastKnownUpdatedAt.current = inserted.updated_at;
+      }
+      setIsSynced(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // โพลข้อมูลใหม่จากเซิร์ฟเวอร์เป็นระยะ เพื่อรับการเปลี่ยนแปลงจากอุปกรณ์เครื่องอื่น
+  useEffect(() => {
+    if (!isSynced) return;
+    const interval = setInterval(async () => {
+      const { data, error } = await supabase
+        .from('app_state')
+        .select('data, updated_at')
+        .eq('id', APP_STATE_ROW_ID)
+        .maybeSingle();
+      if (error || !data) return;
+      const isNewer = data.updated_at !== lastKnownUpdatedAt.current;
+      const recentlyWroteOurselves = Date.now() - lastLocalWriteAt.current < RECENT_LOCAL_WRITE_GUARD_MS;
+      if (isNewer && !recentlyWroteOurselves) {
+        applyRemoteState(data.data || {});
+        lastKnownUpdatedAt.current = data.updated_at;
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [isSynced]);
+
+  // บันทึกขึ้น Supabase (หน่วงเวลาเล็กน้อยเพื่อไม่ยิงถี่เกินไป) ทุกครั้งที่ข้อมูลในเครื่องนี้เปลี่ยน
+  useEffect(() => {
+    if (!isSynced) return; // ยังโหลดรอบแรกไม่เสร็จ อย่าเพิ่งเขียนทับด้วยค่า default
+    if (isApplyingRemote.current) { isApplyingRemote.current = false; return; } // การเปลี่ยนแปลงรอบนี้มาจากรีโมต ไม่ต้องเขียนกลับ
+
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      const nowIso = new Date().toISOString();
+      const { data, error } = await supabase
+        .from('app_state')
+        .update({ data: collectStateForSync(), updated_at: nowIso })
+        .eq('id', APP_STATE_ROW_ID)
+        .select('updated_at')
+        .single();
+      if (!error && data) {
+        lastKnownUpdatedAt.current = data.updated_at;
+        lastLocalWriteAt.current = Date.now();
+        setSyncError(null);
+      } else if (error) {
+        setSyncError('บันทึกขึ้นฐานข้อมูลไม่สำเร็จ — การเปลี่ยนแปลงล่าสุดอาจยังไม่ถูกบันทึก');
+      }
+    }, SAVE_DEBOUNCE_MS);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [appPassword, players, courts, matchRecords, paidMap, checkedInIds, restingIds, attendance, dailyPrices, isSynced]);
+
   // เช็คอิน (เปิด) แล้วได้แต้มเข้าร่วมของวันนี้ ถ้ายังไม่เคยได้วันนี้ — เช็คเอาต์ไม่ลบแต้มที่ได้ไปแล้ว
   const toggleCheckIn = (id) => {
     const isIn = checkedInIds.includes(id);
@@ -1980,6 +2096,17 @@ export default function IbabadApp() {
     { key: 'history', label: 'ประวัติ', icon: <Clock /> },
   ];
 
+  if (!isSynced) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white font-sans flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3">
+          <img src={MASCOT_BOY} alt="" className="w-16 h-16 object-contain mascot-wiggle" />
+          <p className="text-sm text-slate-400">กำลังเชื่อมต่อฐานข้อมูล...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <PasswordGate
@@ -1992,6 +2119,11 @@ export default function IbabadApp() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white font-sans flex flex-col md:flex-row selection:bg-cyan-500/30">
+      {syncError && (
+        <div className="fixed top-0 left-0 right-0 z-[200] bg-rose-950/95 border-b-2 border-rose-500 text-rose-200 text-xs text-center py-1.5 px-3">
+          {syncError}
+        </div>
+      )}
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Kalam:wght@400;700&display=swap');
         h1, h2, h3 { font-family: 'Baloo 2', 'Kalam', sans-serif; }
