@@ -970,10 +970,13 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
             return (
               <div key={p.id} className={`flex items-center justify-between p-3 rounded-xl border-2 transition-colors ${isIn ? 'bg-cyan-950/40 border-cyan-500/50' : 'bg-slate-900 border-slate-700/50'}`}>
                 <div className="flex items-center gap-3">
-                  <Avatar player={p} size="w-11 h-11" textSize="text-xl" />
+                  <Avatar player={p} size="w-16 h-16" textSize="text-3xl" />
                   <div>
-                    <p className="font-bold text-sm text-white">{p.name}</p>
-                    <p className="text-xs text-cyan-500">มือ {p.cls}</p>
+                    <p className="font-bold text-lg text-white">{p.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-sm font-bold text-cyan-500">มือ {p.cls}</span>
+                      <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
