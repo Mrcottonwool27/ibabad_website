@@ -89,6 +89,35 @@ const TEAM = {
   B: { name: 'ทีมน้ำเงิน', border: 'border-blue-500/60', bg: 'bg-blue-950/40', text: 'text-blue-400', solid: 'bg-blue-600 hover:bg-blue-500', ring: 'border-blue-500/50' },
 };
 
+// ย่อ/บีบอัดรูปที่อัปโหลดก่อนเก็บ (ลดขนาดไฟล์รูปจากหลาย MB เหลือหลักสิบ KB)
+// เพื่อไม่ให้พื้นที่ฐานข้อมูลเต็มเร็วเกินไปเวลาสมาชิกหลายคนอัปโหลดรูปโปรไฟล์
+function compressImageFile(file, maxDimension = 300, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height) {
+          if (width > maxDimension) { height = Math.round(height * (maxDimension / width)); width = maxDimension; }
+        } else {
+          if (height > maxDimension) { width = Math.round(width * (maxDimension / height)); height = maxDimension; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error('โหลดรูปไม่สำเร็จ'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function Avatar({ player, size = 'w-11 h-11', textSize = 'text-xl', ring = 'border-2 border-slate-700/60' }) {
   const base = `${size} rounded-full ${ring} overflow-hidden bg-slate-950 shrink-0 flex items-center justify-center`;
   if (player.photo) {
@@ -634,9 +663,9 @@ function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, 
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => onSetPhoto(player.id, reader.result);
-    reader.readAsDataURL(file);
+    compressImageFile(file)
+      .then((dataUrl) => onSetPhoto(player.id, dataUrl))
+      .catch(() => {}); // ถ้าบีบอัดไม่สำเร็จ ก็แค่ไม่เปลี่ยนรูป ไม่ทำแอปพัง
   };
 
   return (
@@ -757,9 +786,9 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPhoto(reader.result);
-    reader.readAsDataURL(file);
+    compressImageFile(file)
+      .then((dataUrl) => setPhoto(dataUrl))
+      .catch(() => {}); // ถ้าบีบอัดไม่สำเร็จ ก็แค่ไม่เปลี่ยนรูป ไม่ทำแอปพัง
   };
 
   // เลือกมือเอง -> ปรับพลังรบไปกึ่งกลางของมือนั้นให้อัตโนมัติ
@@ -1018,6 +1047,50 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
 }
 
 /* ---------------------------------------------------------
+   DELETE DAY CONFIRM — same 5-digit code pattern, for deleting
+   a whole day's worth of history records
+--------------------------------------------------------- */
+function DeleteDayConfirmModal({ dayLabel, onConfirm, onClose }) {
+  const [code] = useState(() => String(Math.floor(10000 + Math.random() * 90000)));
+  const [input, setInput] = useState('');
+  const matches = input.trim() === code;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 z-[110] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-slate-900 border-2 border-rose-600 rounded-2xl max-w-sm w-full p-6 relative" onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-4 right-4 text-slate-300 hover:text-white"><X className="w-5 h-5" /></button>
+        <div className="mb-3">
+          <p className="text-sm text-slate-300">ยืนยันการลบประวัติทั้งวัน</p>
+          <p className="font-bold text-white">{dayLabel}</p>
+        </div>
+        <p className="text-xs text-rose-400 mb-4">จะลบทุกเกม ทุกยอดเงิน และสถิติของวันนี้ทั้งหมด — การลบไม่สามารถย้อนกลับได้ กรุณาพิมพ์รหัส 5 หลักด้านล่างให้ตรงกันเพื่อยืนยัน</p>
+
+        <div className="bg-slate-950 border-2 border-slate-700/60 rounded-xl py-4 text-center mb-4 select-none">
+          <span className="text-3xl font-black tracking-[0.4em] text-cyan-600 font-mono">{code}</span>
+        </div>
+
+        <input
+          type="text"
+          inputMode="numeric"
+          value={input}
+          onChange={(e) => setInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 5))}
+          placeholder="พิมพ์รหัสที่เห็นด้านบน"
+          className="w-full bg-slate-950 border-2 border-slate-700/60 rounded-lg px-3 py-2.5 text-center text-lg tracking-widest font-mono text-white focus:outline-none focus:border-rose-500 mb-4"
+        />
+
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-lg text-sm font-bold border-2 border-slate-700 text-slate-300 hover:bg-slate-800">ยกเลิก</button>
+          <button onClick={() => matches && onConfirm()} disabled={!matches}
+            className="flex-1 py-2.5 rounded-lg text-sm font-bold bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-300 text-white flex items-center justify-center gap-1">
+            <Trash2 className="w-4 h-4" /> ยืนยันลบทั้งวัน
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
    HISTORY — past days, each browsable with full match + money detail
 --------------------------------------------------------- */
 /* ---------------------------------------------------------
@@ -1171,8 +1244,9 @@ function PasswordGate({ appPassword, onUnlock, onChangePassword }) {
   );
 }
 
-function DayDetailModal({ dayKey, records, players, onClose, onEditResult, dailyPrices }) {
+function DayDetailModal({ dayKey, records, players, onClose, onEditResult, dailyPrices, onDeleteDay }) {
   const [editingId, setEditingId] = useState(null);
+  const [showDeleteDay, setShowDeleteDay] = useState(false);
   const dues = computeDues(records, dailyPrices).map(d => ({ ...d, player: players.find(p => p.id === d.id) })).filter(d => d.player);
   const netEloChange = (playerId) => records.reduce((sum, r) => sum + (r.powerDeltas?.[playerId] || 0), 0);
   const totalMoney = dues.reduce((s, d) => s + d.total, 0);
@@ -1188,8 +1262,14 @@ function DayDetailModal({ dayKey, records, players, onClose, onEditResult, daily
     <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl max-w-2xl w-full p-6 relative max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-4 right-4 text-slate-300 hover:text-white"><X className="w-5 h-5" /></button>
-        <h2 className="text-lg font-black text-white mb-1">{formatThaiDateLong(dayKey)}</h2>
+        <div className="flex items-start justify-between gap-3 pr-8 mb-1">
+          <h2 className="text-lg font-black text-white">{formatThaiDateLong(dayKey)}</h2>
+          <button onClick={() => setShowDeleteDay(true)} className="shrink-0 text-xs font-bold px-2.5 py-1.5 rounded-lg border-2 border-rose-600/60 text-rose-400 hover:bg-rose-950/40 flex items-center gap-1">
+            <Trash2 className="w-3.5 h-3.5" /> ลบทั้งวัน
+          </button>
+        </div>
         <p className="text-xs text-slate-300 mb-4">สรุปการจัดก๊วนวันนี้</p>
+
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           <div className="bg-slate-950 rounded-xl p-3 border-2 border-slate-700/60 text-center">
@@ -1266,11 +1346,18 @@ function DayDetailModal({ dayKey, records, players, onClose, onEditResult, daily
           })}
         </div>
       </div>
+      {showDeleteDay && (
+        <DeleteDayConfirmModal
+          dayLabel={formatThaiDateLong(dayKey)}
+          onConfirm={() => { onDeleteDay(dayKey); setShowDeleteDay(false); onClose(); }}
+          onClose={() => setShowDeleteDay(false)}
+        />
+      )}
     </div>
   );
 }
 
-function HistoryPage({ matchRecords, players, onEditResult, dailyPrices }) {
+function HistoryPage({ matchRecords, players, onEditResult, dailyPrices, onDeleteDay }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const groups = groupMatchesByDay(matchRecords);
   const days = Object.keys(groups).sort((a, b) => b.localeCompare(a));
@@ -1322,7 +1409,7 @@ function HistoryPage({ matchRecords, players, onEditResult, dailyPrices }) {
       )}
 
       {selectedDay && (
-        <DayDetailModal dayKey={selectedDay} records={groups[selectedDay]} players={players} onClose={() => setSelectedDay(null)} onEditResult={onEditResult} dailyPrices={dailyPrices} />
+        <DayDetailModal dayKey={selectedDay} records={groups[selectedDay]} players={players} onClose={() => setSelectedDay(null)} onEditResult={onEditResult} dailyPrices={dailyPrices} onDeleteDay={onDeleteDay} />
       )}
     </div>
   );
@@ -1436,6 +1523,8 @@ function SlotPickerModal({ waiting, currentPlayer, onSelect, onClear, onClose })
 function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpenProfile, pairStats, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, restingIds, onToggleResting, paidMap }) {
   const [dragged, setDragged] = useState(null);
   const [pickerTarget, setPickerTarget] = useState(null); // { courtId, slotIndex } | null
+  const [editingCourtNameId, setEditingCourtNameId] = useState(null);
+  const [courtNameDraft, setCourtNameDraft] = useState('');
 
   const placedIds = new Set(courts.flatMap(c => c.players.filter(Boolean).map(p => p.id)));
   const waiting = players.filter(p => checkedInIds.includes(p.id) && !placedIds.has(p.id) && !paidMap[p.id]);
@@ -1443,6 +1532,35 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
 
   const startDragFromWaiting = (player) => setDragged({ type: 'waiting', player });
   const startDragFromCourt = (courtId, slotIndex, player) => setDragged({ type: 'court', courtId, slotIndex, player });
+
+  const startEditCourtName = (court) => { setEditingCourtNameId(court.id); setCourtNameDraft(court.name); };
+  const saveCourtName = (id) => {
+    setCourts(prev => prev.map(c => c.id === id ? { ...c, name: courtNameDraft.trim() || c.name } : c));
+    setEditingCourtNameId(null);
+  };
+
+  // เพิ่มสนามใหม่ — ตั้งชื่ออัตโนมัติต่อจากเลขสนามที่มากที่สุดที่มีอยู่
+  const addCourt = () => {
+    setCourts(prev => {
+      const nameNums = prev.map(c => parseInt((c.name.match(/\d+/) || ['0'])[0], 10)).filter(n => !isNaN(n));
+      const nextNameNum = nameNums.length ? Math.max(...nameNums) + 1 : prev.length + 1;
+      const idNums = prev.map(c => parseInt((c.id.match(/\d+/) || ['0'])[0], 10)).filter(n => !isNaN(n));
+      const nextIdNum = idNums.length ? Math.max(...idNums) + 1 : prev.length + 1;
+      return [...prev, {
+        id: `c${nextIdNum}`, name: `สนาม ${nextNameNum}`, status: 'waiting',
+        players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all',
+      }];
+    });
+  };
+
+  // ลบสนามออก — ห้ามลบสนามที่กำลังเล่นอยู่ (ต้องจบเกมก่อน) และห้ามเหลือน้อยกว่า 1 สนาม
+  const removeCourt = (id) => {
+    setCourts(prev => {
+      const court = prev.find(c => c.id === id);
+      if (!court || court.status === 'playing' || prev.length <= 1) return prev;
+      return prev.filter(c => c.id !== id);
+    });
+  };
 
   const recomputeStatus = (court) => court.status === 'playing' ? court : { ...court, status: court.players.every(Boolean) ? 'ready' : 'waiting' };
 
@@ -1566,14 +1684,38 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     <>
     <div className="space-y-6">
       <div className="space-y-4">
+        <div className="flex justify-end">
+          <button onClick={addCourt} className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> เพิ่มสนาม
+          </button>
+        </div>
         {courts.map(court => (
           <div key={court.id} className={`bg-slate-900 border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-700/60'}`}>
             <div className="flex flex-wrap justify-between items-center mb-4 gap-3">
               <div className="flex items-center gap-3">
-                <h3 className="text-lg font-black text-white">{court.name}</h3>
+                {editingCourtNameId === court.id ? (
+                  <input
+                    autoFocus
+                    value={courtNameDraft}
+                    onChange={(e) => setCourtNameDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && saveCourtName(court.id)}
+                    onBlur={() => saveCourtName(court.id)}
+                    className="text-lg font-black text-white bg-slate-950 border-2 border-cyan-500 rounded-lg px-2 py-0.5 w-32 focus:outline-none"
+                  />
+                ) : (
+                  <button onClick={() => startEditCourtName(court)} className="flex items-center gap-1.5 group" title="แก้ไขชื่อสนาม">
+                    <h3 className="text-lg font-black text-white">{court.name}</h3>
+                    <Pencil className="w-3.5 h-3.5 text-slate-600 group-hover:text-cyan-500" />
+                  </button>
+                )}
                 {court.status === 'playing' && <span className="flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-1 rounded border-2 border-emerald-600"><Play className="w-3 h-3" /> กำลังประลอง</span>}
                 {court.status === 'waiting' && <span className="text-xs font-bold text-slate-300 bg-slate-950/50 px-2 py-1 rounded">รอผู้เล่น</span>}
                 {court.status === 'ready' && <span className="text-xs font-bold text-cyan-400 bg-cyan-950/40 px-2 py-1 rounded">พร้อมเริ่ม</span>}
+                {court.status !== 'playing' && courts.length > 1 && (
+                  <button onClick={() => removeCourt(court.id)} title="ลบสนามนี้" className="text-slate-600 hover:text-rose-400">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 bg-slate-950 px-3 py-1.5 rounded-lg border-2 border-slate-700/50">
@@ -1973,13 +2115,27 @@ export default function IbabadApp() {
   // เช็คอิน (เปิด) แล้วได้แต้มเข้าร่วมของวันนี้ ถ้ายังไม่เคยได้วันนี้ — เช็คเอาต์ไม่ลบแต้มที่ได้ไปแล้ว
   const toggleCheckIn = (id) => {
     const isIn = checkedInIds.includes(id);
+    const today = dayKeyOf(Date.now());
     if (!isIn) {
-      const today = dayKeyOf(Date.now());
+      // เช็คอิน: นับแต้มเข้าร่วมของวันนี้ ถ้ายังไม่เคยได้วันนี้
       setAttendance(prev => {
         const existing = prev[id] || {};
         if (existing[today]) return prev;
         return { ...prev, [id]: { ...existing, [today]: true } };
       });
+    } else {
+      // เอาชื่อออก (เช็คเอาต์): ถ้ายังไม่เคยลงเล่นเกมไหนเลยวันนี้ ให้ถือว่าเป็นการเช็คอินผิดพลาด
+      // ถอนแต้มเข้าร่วมของวันนี้คืน เพื่อไม่ให้นับว่ามาแล้ว 1 วันทั้งที่จริงไม่ได้มาเล่น
+      const playedToday = matchRecords.some(r => dayKeyOf(r.timestamp) === today && r.playerIds.includes(id));
+      if (!playedToday) {
+        setAttendance(prev => {
+          const existing = prev[id];
+          if (!existing || !existing[today]) return prev;
+          const rest = { ...existing };
+          delete rest[today];
+          return { ...prev, [id]: rest };
+        });
+      }
     }
     setCheckedInIds(prev => isIn ? prev.filter(x => x !== id) : [...prev, id]);
   };
@@ -2031,6 +2187,11 @@ export default function IbabadApp() {
       return { ...p, power: Math.max(MIN_POWER, p.power - oldDelta + newDelta) };
     }));
     setMatchRecords(prev => prev.map(r => r.id === recordId ? { ...r, winner: newWinner, powerDeltas: newPowerDeltas } : r));
+  };
+
+  // ลบประวัติทั้งวัน — เอาแมทช์ของวันนั้นออกจาก matchRecords ทั้งหมด (ยอดเงิน/สถิติ/ทำเนียบที่คำนวณจาก matchRecords จะหายไปเองตามไปด้วย)
+  const deleteDayRecords = (dayKey) => {
+    setMatchRecords(prev => prev.filter(r => dayKeyOf(r.timestamp) !== dayKey));
   };
 
   const markPaid = (id, method) => setPaidMap(prev => ({ ...prev, [id]: { paid: true, method } }));
@@ -2178,7 +2339,7 @@ export default function IbabadApp() {
           {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} />}
           {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} />}
           {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} />}
-          {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} />}
+          {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} />}
         </div>
       </main>
 
