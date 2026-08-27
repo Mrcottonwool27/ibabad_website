@@ -4,7 +4,7 @@ import {
   Target, Zap, Wallet, Bell, Info, X, Shuffle, Swords,
   ShieldOff, Trophy, TrendingUp, CheckCircle2, AlertCircle,
   MapPin, Clock, Users, Play, Plus, Minus, GripHorizontal,
-  RefreshCw, LayoutGrid, Search, Camera, Settings, Pencil, Trash2, PauseCircle
+  RefreshCw, LayoutGrid, Search, Camera, Settings, Pencil, Trash2, PauseCircle, ChevronUp, ChevronDown
 } from 'lucide-react';
 /* ---------------------------------------------------------
    MASCOT ARTWORK — hand-drawn stickers (user-provided), embedded as data URIs
@@ -1565,7 +1565,13 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     });
   };
 
-  const recomputeStatus = (court) => court.status === 'playing' ? court : { ...court, status: court.players.every(Boolean) ? 'ready' : 'waiting' };
+  // พร้อมเริ่มเกมได้ตั้งแต่มีผู้เล่นอย่างน้อยฝั่งละ 1 คน (ไม่ต้องรอครบ 4 คน)
+  const recomputeStatus = (court) => {
+    if (court.status === 'playing') return court;
+    const hasTeamA = Boolean(court.players[0] || court.players[1]);
+    const hasTeamB = Boolean(court.players[2] || court.players[3]);
+    return { ...court, status: (hasTeamA && hasTeamB) ? 'ready' : 'waiting' };
+  };
 
   const dropOnCourtSlot = (courtId, slotIndex) => {
     if (!dragged) return;
@@ -1892,6 +1898,8 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
 --------------------------------------------------------- */
 function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid, dailyPrices, onChangeTodayPrice }) {
   const [payPromptId, setPayPromptId] = useState(null);
+  const [courtFeeInput, setCourtFeeInput] = useState(null); // null = ยังไม่มีการพิมพ์เอง ใช้ค่าจาก todayPrice
+  const [shuttlePriceInput, setShuttlePriceInput] = useState(null);
   const todayKey = dayKeyOf(Date.now());
   const todayPrice = priceForDay(dailyPrices, todayKey);
   const duesRaw = computeDues(matchRecords, dailyPrices);
@@ -1905,6 +1913,17 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
     setPayPromptId(null);
   };
 
+  const setCourtFee = (raw) => {
+    setCourtFeeInput(raw);
+    onChangeTodayPrice({ courtFee: raw === '' ? 0 : Number(raw) || 0, shuttlePrice: todayPrice.shuttlePrice });
+  };
+  const setShuttlePrice = (raw) => {
+    setShuttlePriceInput(raw);
+    onChangeTodayPrice({ courtFee: todayPrice.courtFee, shuttlePrice: raw === '' ? 0 : Number(raw) || 0 });
+  };
+  const bumpCourtFee = (delta) => setCourtFee(String(Math.max(0, todayPrice.courtFee + delta)));
+  const bumpShuttlePrice = (delta) => setShuttlePrice(String(Math.max(0, todayPrice.shuttlePrice + delta)));
+
   return (
     <div className="space-y-6">
       <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl p-6 relative overflow-hidden">
@@ -1917,13 +1936,27 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-slate-300">
               ค่าคอร์ท/เกม (บาท)
-              <input type="number" min="0" value={todayPrice.courtFee} onChange={(e) => onChangeTodayPrice({ courtFee: Number(e.target.value) || 0, shuttlePrice: todayPrice.shuttlePrice })}
-                className="mt-1 w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              <div className="mt-1 flex items-center gap-1">
+                <input type="text" inputMode="numeric" value={courtFeeInput ?? String(todayPrice.courtFee)}
+                  onChange={(e) => setCourtFee(e.target.value.replace(/[^0-9]/g, ''))}
+                  className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                <div className="flex flex-col shrink-0">
+                  <button type="button" onClick={() => bumpCourtFee(1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 border-b-0 rounded-t text-slate-300 hover:text-cyan-400"><ChevronUp className="w-3 h-3" /></button>
+                  <button type="button" onClick={() => bumpCourtFee(-1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 rounded-b text-slate-300 hover:text-cyan-400"><ChevronDown className="w-3 h-3" /></button>
+                </div>
+              </div>
             </label>
             <label className="text-xs text-slate-300">
               ค่าลูกแบด/ลูก (บาท)
-              <input type="number" min="0" value={todayPrice.shuttlePrice} onChange={(e) => onChangeTodayPrice({ courtFee: todayPrice.courtFee, shuttlePrice: Number(e.target.value) || 0 })}
-                className="mt-1 w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              <div className="mt-1 flex items-center gap-1">
+                <input type="text" inputMode="numeric" value={shuttlePriceInput ?? String(todayPrice.shuttlePrice)}
+                  onChange={(e) => setShuttlePrice(e.target.value.replace(/[^0-9]/g, ''))}
+                  className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                <div className="flex flex-col shrink-0">
+                  <button type="button" onClick={() => bumpShuttlePrice(1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 border-b-0 rounded-t text-slate-300 hover:text-cyan-400"><ChevronUp className="w-3 h-3" /></button>
+                  <button type="button" onClick={() => bumpShuttlePrice(-1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 rounded-b text-slate-300 hover:text-cyan-400"><ChevronDown className="w-3 h-3" /></button>
+                </div>
+              </div>
             </label>
           </div>
         </div>
