@@ -684,7 +684,7 @@ function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, 
             >
               <Camera className="w-4 h-4" />
             </button>
-            <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} className="hidden" />
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} className="hidden" />
           </div>
           <h2 className="text-2xl font-black text-white mb-2">{player.name}</h2>
           <span className={`px-2 py-0.5 rounded text-xs font-bold border-2 mb-3 ${clsColor(player.cls)}`}>มือ {player.cls}</span>
@@ -829,7 +829,7 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
             >
               <Camera className="w-3.5 h-3.5" />
             </button>
-            <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} className="hidden" />
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} className="hidden" />
           </div>
         </div>
 
