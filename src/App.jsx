@@ -118,6 +118,105 @@ function compressImageFile(file, maxDimension = 300, quality = 0.8) {
   });
 }
 
+// ดูรูปโปรไฟล์ขนาดใหญ่ (คลิกที่รูปเพื่อเปิด/ปิด)
+function PhotoLightbox({ src, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/90 z-[120] flex items-center justify-center p-4" onClick={onClose}>
+      <button onClick={onClose} className="absolute top-4 right-4 text-white"><X className="w-7 h-7" /></button>
+      <img src={src} alt="" className="max-w-[90vw] max-h-[85vh] object-contain rounded-xl border-2 border-slate-700" onClick={(e) => e.stopPropagation()} />
+    </div>
+  );
+}
+
+// ครอบ/ขยับ/ซูมรูปก่อนบันทึกเป็นรูปโปรไฟล์
+const CROP_VIEWPORT = 260;
+const CROP_OUTPUT = 320;
+
+function PhotoCropModal({ file, onSave, onClose }) {
+  const imgRef = useRef(null);
+  const [imgUrl] = useState(() => URL.createObjectURL(file));
+  const [natural, setNatural] = useState(null); // { w, h }
+  const [baseScale, setBaseScale] = useState(1);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const dragRef = useRef(null);
+
+  useEffect(() => () => URL.revokeObjectURL(imgUrl), [imgUrl]);
+
+  const handleImgLoad = () => {
+    const w = imgRef.current.naturalWidth, h = imgRef.current.naturalHeight;
+    setNatural({ w, h });
+    setBaseScale(Math.max(CROP_VIEWPORT / w, CROP_VIEWPORT / h));
+  };
+
+  const startDrag = (clientX, clientY) => { dragRef.current = { startX: clientX, startY: clientY, offset }; };
+  const moveDrag = (clientX, clientY) => {
+    if (!dragRef.current) return;
+    const dx = clientX - dragRef.current.startX, dy = clientY - dragRef.current.startY;
+    setOffset({ x: dragRef.current.offset.x + dx, y: dragRef.current.offset.y + dy });
+  };
+  const endDrag = () => { dragRef.current = null; };
+
+  const displayScale = baseScale * zoom;
+
+  const handleSave = () => {
+    if (!natural) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = CROP_OUTPUT;
+    canvas.height = CROP_OUTPUT;
+    const ctx = canvas.getContext('2d');
+    const renderScale = CROP_OUTPUT / CROP_VIEWPORT;
+    const drawW = natural.w * displayScale * renderScale;
+    const drawH = natural.h * displayScale * renderScale;
+    ctx.save();
+    ctx.translate(CROP_OUTPUT / 2 + offset.x * renderScale, CROP_OUTPUT / 2 + offset.y * renderScale);
+    ctx.drawImage(imgRef.current, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
+    onSave(canvas.toDataURL('image/jpeg', 0.85));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 z-[120] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl max-w-sm w-full p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-sm font-bold text-white mb-3 text-center">ปรับตำแหน่ง/ซูมรูป</h3>
+        <div
+          className="mx-auto rounded-full overflow-hidden border-2 border-cyan-500 bg-slate-950 relative touch-none select-none cursor-grab active:cursor-grabbing"
+          style={{ width: CROP_VIEWPORT, height: CROP_VIEWPORT }}
+          onMouseDown={(e) => startDrag(e.clientX, e.clientY)}
+          onMouseMove={(e) => e.buttons === 1 && moveDrag(e.clientX, e.clientY)}
+          onMouseUp={endDrag}
+          onMouseLeave={endDrag}
+          onTouchStart={(e) => startDrag(e.touches[0].clientX, e.touches[0].clientY)}
+          onTouchMove={(e) => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
+          onTouchEnd={endDrag}
+        >
+          <img
+            ref={imgRef}
+            src={imgUrl}
+            alt=""
+            onLoad={handleImgLoad}
+            draggable={false}
+            style={natural ? {
+              position: 'absolute', left: '50%', top: '50%',
+              width: natural.w * displayScale, height: natural.h * displayScale,
+              transform: `translate(-50%, -50%) translate(${offset.x}px, ${offset.y}px)`,
+            } : { display: 'none' }}
+          />
+        </div>
+        <div className="flex items-center gap-2 mt-4">
+          <span className="text-xs text-slate-300">ซูม</span>
+          <input type="range" min="1" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="flex-1" />
+        </div>
+        <p className="text-[11px] text-slate-300 text-center mt-1">ลากรูปเพื่อขยับตำแหน่ง</p>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-lg text-sm font-bold border-2 border-slate-700 text-slate-300 hover:bg-slate-800">ยกเลิก</button>
+          <button onClick={handleSave} disabled={!natural} className="flex-1 py-2.5 rounded-lg text-sm font-bold bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 text-white">บันทึกรูป</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Avatar({ player, size = 'w-11 h-11', textSize = 'text-xl', ring = 'border-2 border-slate-700/60' }) {
   const base = `${size} rounded-full ${ring} overflow-hidden bg-slate-950 shrink-0 flex items-center justify-center`;
   if (player.photo) {
@@ -628,6 +727,8 @@ function computeDues(matchRecords, dailyPrices) {
 function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, pairStats = {}, matchRecords = [] }) {
   const fileInputRef = React.useRef(null);
   const [showContact, setShowContact] = useState(false);
+  const [cropFile, setCropFile] = useState(null);
+  const [showLightbox, setShowLightbox] = useState(false);
   React.useEffect(() => { setShowContact(false); }, [player?.id]);
   if (!player) return null;
   const winRate = Math.round((player.w / player.played) * 100) || 0;
@@ -663,9 +764,8 @@ function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, 
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    compressImageFile(file)
-      .then((dataUrl) => onSetPhoto(player.id, dataUrl))
-      .catch(() => {}); // ถ้าบีบอัดไม่สำเร็จ ก็แค่ไม่เปลี่ยนรูป ไม่ทำแอปพัง
+    setCropFile(file);
+    e.target.value = ''; // ให้เลือกไฟล์เดิมซ้ำได้ถ้าจำเป็น
   };
 
   return (
@@ -674,7 +774,10 @@ function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, 
         <button onClick={onClose} className="absolute top-4 right-4 text-slate-300 hover:text-white"><X className="w-5 h-5" /></button>
         <div className="flex flex-col items-center text-center">
           <div className="relative mb-3">
-            <div className="w-24 h-24 rounded-full bg-slate-950 border-4 border-slate-700/60 overflow-hidden flex items-center justify-center text-5xl">
+            <div
+              onClick={() => player.photo && setShowLightbox(true)}
+              className={`w-24 h-24 rounded-full bg-slate-950 border-4 border-slate-700/60 overflow-hidden flex items-center justify-center text-5xl ${player.photo ? 'cursor-zoom-in' : ''}`}
+            >
               {player.photo ? <img src={player.photo} alt={player.name} className="w-full h-full object-cover" /> : player.avatar}
             </div>
             <button
@@ -763,6 +866,16 @@ function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, 
           </div>
         </div>
       </div>
+      {cropFile && (
+        <PhotoCropModal
+          file={cropFile}
+          onSave={(dataUrl) => { onSetPhoto(player.id, dataUrl); setCropFile(null); }}
+          onClose={() => setCropFile(null)}
+        />
+      )}
+      {showLightbox && player.photo && (
+        <PhotoLightbox src={player.photo} onClose={() => setShowLightbox(false)} />
+      )}
     </div>
   );
 }
@@ -781,14 +894,15 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
   const [power, setPower] = useState(initial?.power ?? (TIER_BASE_POWER[initial?.cls || 'N'] + 50));
   const [gender, setGender] = useState(initial?.gender || 'M');
   const [photo, setPhoto] = useState(initial?.photo || null);
+  const [cropFile, setCropFile] = useState(null);
+  const [showLightbox, setShowLightbox] = useState(false);
   const fileInputRef = React.useRef(null);
 
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    compressImageFile(file)
-      .then((dataUrl) => setPhoto(dataUrl))
-      .catch(() => {}); // ถ้าบีบอัดไม่สำเร็จ ก็แค่ไม่เปลี่ยนรูป ไม่ทำแอปพัง
+    setCropFile(file);
+    e.target.value = '';
   };
 
   // เลือกมือเอง -> ปรับพลังรบไปกึ่งกลางของมือนั้นให้อัตโนมัติ
@@ -819,7 +933,10 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
 
         <div className="flex flex-col items-center mb-4">
           <div className="relative mb-2">
-            <div className="w-20 h-20 rounded-full bg-slate-950 border-4 border-slate-700/60 overflow-hidden flex items-center justify-center text-4xl">
+            <div
+              onClick={() => photo && setShowLightbox(true)}
+              className={`w-20 h-20 rounded-full bg-slate-950 border-4 border-slate-700/60 overflow-hidden flex items-center justify-center text-4xl ${photo ? 'cursor-zoom-in' : ''}`}
+            >
               {photo ? <img src={photo} alt="" className="w-full h-full object-cover" /> : '🏸'}
             </div>
             <button
@@ -878,6 +995,16 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
           {mode === 'edit' ? <><CheckCircle2 className="w-4 h-4" /> บันทึกการแก้ไข</> : <><Plus className="w-4 h-4" /> เพิ่มสมาชิก</>}
         </button>
       </div>
+      {cropFile && (
+        <PhotoCropModal
+          file={cropFile}
+          onSave={(dataUrl) => { setPhoto(dataUrl); setCropFile(null); }}
+          onClose={() => setCropFile(null)}
+        />
+      )}
+      {showLightbox && photo && (
+        <PhotoLightbox src={photo} onClose={() => setShowLightbox(false)} />
+      )}
     </div>
   );
 }
