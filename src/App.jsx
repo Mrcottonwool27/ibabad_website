@@ -17,7 +17,7 @@ const MASCOT_GIRL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKEAAAFACAYAA
 /* ---------------------------------------------------------
    TIER / POWER SYSTEM (MMR-style)
 --------------------------------------------------------- */
-const TIERS = ['BG1', 'BG2', 'NB', 'N-', 'N', 'S-', 'S', 'P-', 'P', 'C']; // ต่ำ -> สูง
+const TIERS = ['BG1', 'BG2', 'NB', 'N-', 'N', 'N+', 'S-', 'S', 'P-', 'P', 'C']; // ต่ำ -> สูง
 const TIER_BASE_POWER = Object.fromEntries(TIERS.map((t, i) => [t, (i + 1) * 100]));
 
 // หามือ (cls) ที่ตรงกับค่าพลังรบ (power) ที่กำหนด — ใช้ตอนแอดมินแก้พลังรบเองแบบ manual แล้วให้มืออัปเดตตาม
@@ -79,7 +79,7 @@ const initialPlayers = [
 const clsColor = (cls) => {
   const idx = TIERS.indexOf(cls);
   if (idx < 3) return "bg-slate-800 text-slate-300 border-slate-600";
-  if (idx < 7) return "bg-cyan-950/40 text-cyan-400 border-cyan-500/30";
+  if (idx < 8) return "bg-cyan-950/40 text-cyan-400 border-cyan-500/30";
   return "bg-cyan-950/40 text-cyan-400 border-cyan-500/30";
 };
 
@@ -621,6 +621,21 @@ function updateEloForMatch(players, teamAIds, teamBIds, winner) {
   });
 }
 
+// ปรับสถิติ played/w/l ของผู้เล่นในแมทช์หนึ่งๆ — sign: 1 = บวกเข้า (จบเกมใหม่), -1 = ลบออก (แก้ไข/ลบเกม)
+function applyRecordStats(players, teamAIds, teamBIds, winner, sign) {
+  return players.map(p => {
+    const inA = teamAIds.includes(p.id), inB = teamBIds.includes(p.id);
+    if (!inA && !inB) return p;
+    let played = p.played + sign;
+    let w = p.w, l = p.l;
+    if (winner !== 'draw') {
+      const won = (inA && winner === 'A') || (inB && winner === 'B');
+      if (won) w += sign; else l += sign;
+    }
+    return { ...p, played: Math.max(0, played), w: Math.max(0, w), l: Math.max(0, l) };
+  });
+}
+
 function computePairStats(matchRecords) {
   const result = {};
   const ensure = (id) => { if (!result[id]) result[id] = { mates: {}, opps: {} }; };
@@ -1055,12 +1070,15 @@ function DeleteConfirmModal({ player, onConfirm, onClose }) {
   );
 }
 
-function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer }) {
+function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer, attendance }) {
   const [query, setQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const filtered = players.filter(p => p.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const attendanceCount = (id) => Object.keys(attendance[id] || {}).length;
+  const filtered = players
+    .filter(p => p.name.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => attendanceCount(b.id) - attendanceCount(a.id));
   const checkedInPlayers = players.filter(p => checkedInIds.includes(p.id));
 
   const confirmDelete = () => {
@@ -1088,21 +1106,26 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="พิมพ์ชื่อเพื่อค้นหา..."
-            className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-full py-2.5 pl-10 pr-4 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
+            className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-full py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
           />
+          {query && (
+            <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map(p => {
             const isIn = checkedInIds.includes(p.id);
             return (
-              <div key={p.id} className={`flex items-center justify-between p-3 rounded-xl border-2 transition-colors ${isIn ? 'bg-cyan-950/40 border-cyan-500/50' : 'bg-slate-900 border-slate-700/50'}`}>
-                <div className="flex items-center gap-3">
-                  <Avatar player={p} size="w-16 h-16" textSize="text-3xl" />
-                  <div>
-                    <p className="font-bold text-lg text-white">{p.name}</p>
+              <div key={p.id} className={`p-3 rounded-xl border-2 transition-colors ${isIn ? 'bg-cyan-950/40 border-cyan-500/50' : 'bg-slate-900 border-slate-700/50'}`}>
+                <div className="flex items-center gap-3 mb-3">
+                  <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
+                  <div className="min-w-0">
+                    <p className="font-bold text-base text-white truncate">{p.name}</p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-sm font-bold text-cyan-500">มือ {p.cls}</span>
-                      <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
+                      <span className="text-xs font-bold text-cyan-500">มือ {p.cls}</span>
+                      <span className={`text-sm font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
                     </div>
                   </div>
                 </div>
@@ -1110,12 +1133,12 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
                   <button onClick={() => onOpenProfile(p.id)} className="text-cyan-500 hover:text-cyan-400"><Info className="w-4 h-4" /></button>
                   <button onClick={() => setEditTarget(p)} className="text-cyan-500 hover:text-cyan-400"><Pencil className="w-4 h-4" /></button>
                   <button onClick={() => setDeleteTarget(p)}
-                    className="text-xs font-bold px-2 py-1.5 rounded-lg border-2 flex items-center gap-1 text-rose-400 border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20">
+                    className="p-1.5 rounded-lg border-2 flex items-center gap-1 text-rose-400 border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => onToggleCheckIn(p.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 ${isIn ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/20'}`}
+                    className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 ${isIn ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/20'}`}
                   >
                     {isIn ? <><CheckCircle2 className="w-4 h-4" /> เช็คอินแล้ว</> : <><Plus className="w-4 h-4" /> เพิ่ม</>}
                   </button>
@@ -1123,7 +1146,7 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
               </div>
             );
           })}
-          {filtered.length === 0 && <p className="text-center text-cyan-500 text-sm py-6">ไม่พบชื่อนี้</p>}
+          {filtered.length === 0 && <p className="col-span-full text-center text-cyan-500 text-sm py-6">ไม่พบชื่อนี้</p>}
         </div>
       </div>
 
@@ -1180,7 +1203,7 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
    DELETE DAY CONFIRM — same 5-digit code pattern, for deleting
    a whole day's worth of history records
 --------------------------------------------------------- */
-function DeleteDayConfirmModal({ dayLabel, onConfirm, onClose }) {
+function DeleteDayConfirmModal({ title, subtitle, description, confirmLabel = 'ยืนยันลบ', onConfirm, onClose }) {
   const [code] = useState(() => String(Math.floor(10000 + Math.random() * 90000)));
   const [input, setInput] = useState('');
   const matches = input.trim() === code;
@@ -1190,10 +1213,10 @@ function DeleteDayConfirmModal({ dayLabel, onConfirm, onClose }) {
       <div className="bg-slate-900 border-2 border-rose-600 rounded-2xl max-w-sm w-full p-6 relative" onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-4 right-4 text-slate-300 hover:text-white"><X className="w-5 h-5" /></button>
         <div className="mb-3">
-          <p className="text-sm text-slate-300">ยืนยันการลบประวัติทั้งวัน</p>
-          <p className="font-bold text-white">{dayLabel}</p>
+          <p className="text-sm text-slate-300">{title}</p>
+          <p className="font-bold text-white">{subtitle}</p>
         </div>
-        <p className="text-xs text-rose-400 mb-4">จะลบทุกเกม ทุกยอดเงิน และสถิติของวันนี้ทั้งหมด — การลบไม่สามารถย้อนกลับได้ กรุณาพิมพ์รหัส 5 หลักด้านล่างให้ตรงกันเพื่อยืนยัน</p>
+        <p className="text-xs text-rose-400 mb-4">{description}</p>
 
         <div className="bg-slate-950 border-2 border-slate-700/60 rounded-xl py-4 text-center mb-4 select-none">
           <span className="text-3xl font-black tracking-[0.4em] text-cyan-600 font-mono">{code}</span>
@@ -1212,7 +1235,7 @@ function DeleteDayConfirmModal({ dayLabel, onConfirm, onClose }) {
           <button onClick={onClose} className="flex-1 py-2.5 rounded-lg text-sm font-bold border-2 border-slate-700 text-slate-300 hover:bg-slate-800">ยกเลิก</button>
           <button onClick={() => matches && onConfirm()} disabled={!matches}
             className="flex-1 py-2.5 rounded-lg text-sm font-bold bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-300 text-white flex items-center justify-center gap-1">
-            <Trash2 className="w-4 h-4" /> ยืนยันลบทั้งวัน
+            <Trash2 className="w-4 h-4" /> {confirmLabel}
           </button>
         </div>
       </div>
@@ -1374,9 +1397,10 @@ function PasswordGate({ appPassword, onUnlock, onChangePassword }) {
   );
 }
 
-function DayDetailModal({ dayKey, records, players, onClose, onEditResult, dailyPrices, onDeleteDay }) {
+function DayDetailModal({ dayKey, records, players, onClose, onEditResult, dailyPrices, onDeleteDay, onDeleteMatch }) {
   const [editingId, setEditingId] = useState(null);
   const [showDeleteDay, setShowDeleteDay] = useState(false);
+  const [deleteMatchTarget, setDeleteMatchTarget] = useState(null); // record id ที่กำลังจะลบเดี่ยว
   const dues = computeDues(records, dailyPrices).map(d => ({ ...d, player: players.find(p => p.id === d.id) })).filter(d => d.player);
   const netEloChange = (playerId) => records.reduce((sum, r) => sum + (r.powerDeltas?.[playerId] || 0), 0);
   const totalMoney = dues.reduce((s, d) => s + d.total, 0);
@@ -1442,6 +1466,9 @@ function DayDetailModal({ dayKey, records, players, onClose, onEditResult, daily
                 <button onClick={() => setEditingId(editingId === r.id ? null : r.id)} className="text-slate-300 hover:text-cyan-600">
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
+                <button onClick={() => setDeleteMatchTarget(r.id)} className="text-slate-300 hover:text-rose-400">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
               {editingId === r.id && (
                 <div className="mt-2.5 pt-2.5 border-t border-slate-700/60 flex items-center gap-1.5 flex-wrap">
@@ -1478,16 +1505,29 @@ function DayDetailModal({ dayKey, records, players, onClose, onEditResult, daily
       </div>
       {showDeleteDay && (
         <DeleteDayConfirmModal
-          dayLabel={formatThaiDateLong(dayKey)}
+          title="ยืนยันการลบประวัติทั้งวัน"
+          subtitle={formatThaiDateLong(dayKey)}
+          description="จะลบทุกเกม ทุกยอดเงิน และสถิติของวันนี้ทั้งหมด — การลบไม่สามารถย้อนกลับได้ กรุณาพิมพ์รหัส 5 หลักด้านล่างให้ตรงกันเพื่อยืนยัน"
+          confirmLabel="ยืนยันลบทั้งวัน"
           onConfirm={() => { onDeleteDay(dayKey); setShowDeleteDay(false); onClose(); }}
           onClose={() => setShowDeleteDay(false)}
+        />
+      )}
+      {deleteMatchTarget && (
+        <DeleteDayConfirmModal
+          title="ยืนยันการลบเกมนี้"
+          subtitle={`เกม ${sortedRecords.findIndex(r => r.id === deleteMatchTarget) + 1} · ${formatThaiDateLong(dayKey)}`}
+          description="จะลบเกมนี้ พร้อมคืนพลัง (ELO) และสถิติแพ้/ชนะของผู้เล่นทั้ง 4 คนกลับเป็นก่อนเกมนี้ — การลบไม่สามารถย้อนกลับได้ กรุณาพิมพ์รหัส 5 หลักด้านล่างให้ตรงกันเพื่อยืนยัน"
+          confirmLabel="ยืนยันลบเกมนี้"
+          onConfirm={() => { onDeleteMatch(deleteMatchTarget); setDeleteMatchTarget(null); }}
+          onClose={() => setDeleteMatchTarget(null)}
         />
       )}
     </div>
   );
 }
 
-function HistoryPage({ matchRecords, players, onEditResult, dailyPrices, onDeleteDay }) {
+function HistoryPage({ matchRecords, players, onEditResult, dailyPrices, onDeleteDay, onDeleteMatch }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const groups = groupMatchesByDay(matchRecords);
   const days = Object.keys(groups).sort((a, b) => b.localeCompare(a));
@@ -1539,7 +1579,7 @@ function HistoryPage({ matchRecords, players, onEditResult, dailyPrices, onDelet
       )}
 
       {selectedDay && (
-        <DayDetailModal dayKey={selectedDay} records={groups[selectedDay]} players={players} onClose={() => setSelectedDay(null)} onEditResult={onEditResult} dailyPrices={dailyPrices} onDeleteDay={onDeleteDay} />
+        <DayDetailModal dayKey={selectedDay} records={groups[selectedDay] || []} players={players} onClose={() => setSelectedDay(null)} onEditResult={onEditResult} dailyPrices={dailyPrices} onDeleteDay={onDeleteDay} onDeleteMatch={onDeleteMatch} />
       )}
     </div>
   );
@@ -1780,11 +1820,13 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   };
 
   const startGame = (courtId) => setCourts(prev => prev.map(c => c.id === courtId ? { ...c, status: 'playing' } : c));
+  const cancelStartedGame = (courtId) => setCourts(prev => prev.map(c => c.id === courtId ? { ...c, status: 'ready' } : c)); // กดเริ่มเกมผิด — ย้อนกลับไปสถานะ "พร้อมเริ่ม" คนเดิมยังอยู่ครบ ไม่มีผลกับสถิติเพราะยังไม่ได้บันทึกเกม
 
   const endGame = (courtId, winner) => {
     const court = courts.find(c => c.id === courtId);
     onGameEnd(court, winner);
-    setCourts(prev => prev.map(c => c.id === courtId ? { ...c, status: 'waiting', players: [null, null, null, null], shuttlecocks: 1 } : c));
+    // เกมจบแล้ว เอากล่องสนามนี้ออกจากลิสต์เลย ไม่สร้างช่องว่างใหม่ให้อัตโนมัติ — ต้องกด "เพิ่มสนาม" เองถ้าต้องการช่องใหม่
+    setCourts(prev => prev.filter(c => c.id !== courtId));
   };
 
   const addShuttle = (courtId) => setCourts(prev => prev.map(c => c.id === courtId ? { ...c, shuttlecocks: c.shuttlecocks + 1 } : c));
@@ -1816,6 +1858,10 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     ? courts.find(c => c.id === pickerTarget.courtId)?.players[pickerTarget.slotIndex] || null
     : null;
 
+  // สนามที่กำลังเล่น/พร้อมเริ่มอยู่ด้านบน สนามที่จบเกมแล้ว (ว่าง) จะเลื่อนลงล่างให้อัตโนมัติ
+  const courtStatusOrder = { playing: 0, ready: 1, waiting: 2 };
+  const displayCourts = [...courts].sort((a, b) => (courtStatusOrder[a.status] ?? 3) - (courtStatusOrder[b.status] ?? 3));
+
   return (
     <>
     <div className="space-y-6">
@@ -1825,7 +1871,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
             <Plus className="w-4 h-4" /> เพิ่มสนาม
           </button>
         </div>
-        {courts.map(court => (
+        {displayCourts.map(court => (
           <div key={court.id} className={`bg-slate-900 border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-700/60'}`}>
             <div className="flex flex-wrap justify-between items-center mb-4 gap-3">
               <div className="flex items-center gap-3">
@@ -1844,7 +1890,16 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                     <Pencil className="w-3.5 h-3.5 text-slate-600 group-hover:text-cyan-500" />
                   </button>
                 )}
-                {court.status === 'playing' && <span className="flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-1 rounded border-2 border-emerald-600"><Play className="w-3 h-3" /> กำลังประลอง</span>}
+                {court.status === 'playing' && (
+                  <span className="flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-1 rounded border-2 border-emerald-600">
+                    <Play className="w-3 h-3" /> กำลังประลอง
+                  </span>
+                )}
+                {court.status === 'playing' && (
+                  <button onClick={() => cancelStartedGame(court.id)} title="ยกเลิก (กดเริ่มเกมผิด)" className="text-slate-300 hover:text-rose-400 flex items-center gap-1 text-xs font-bold">
+                    <X className="w-3.5 h-3.5" /> ยกเลิก
+                  </button>
+                )}
                 {court.status === 'waiting' && <span className="text-xs font-bold text-slate-300 bg-slate-950/50 px-2 py-1 rounded">รอผู้เล่น</span>}
                 {court.status === 'ready' && <span className="text-xs font-bold text-cyan-400 bg-cyan-950/40 px-2 py-1 rounded">พร้อมเริ่ม</span>}
                 {court.status !== 'playing' && courts.length > 1 && (
@@ -2033,6 +2088,8 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
   const dues = duesRaw.map(d => ({ ...d, player: players.find(p => p.id === d.id) })).filter(d => d.player);
   const totalExpected = dues.reduce((s, d) => s + d.total, 0);
   const collected = dues.filter(d => paidMap[d.player.id]).reduce((s, d) => s + d.total, 0);
+  const cashCollected = dues.filter(d => paidMap[d.player.id]?.method === 'cash').reduce((s, d) => s + d.total, 0);
+  const transferCollected = dues.filter(d => paidMap[d.player.id]?.method === 'transfer').reduce((s, d) => s + d.total, 0);
   const totalShuttles = matchRecords.reduce((s, r) => s + r.shuttlecocks, 0);
 
   const handleMarkPaid = (id, method) => {
@@ -2098,6 +2155,10 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
         </div>
         <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border-2 border-slate-700/50 mt-2">
           <div className="h-full bg-gradient-to-r from-cyan-600 to-blue-500" style={{ width: totalExpected ? `${(collected / totalExpected) * 100}%` : '0%' }} />
+        </div>
+        <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
+          <div className="bg-slate-950 rounded-lg p-3 border-2 border-emerald-700/40 flex justify-between"><span className="text-emerald-400">เงินสด</span><span className="font-mono text-white">฿{cashCollected}</span></div>
+          <div className="bg-slate-950 rounded-lg p-3 border-2 border-cyan-700/40 flex justify-between"><span className="text-cyan-400">เงินโอน</span><span className="font-mono text-white">฿{transferCollected}</span></div>
         </div>
       </div>
       <div className="space-y-3">
@@ -2167,6 +2228,7 @@ export default function IbabadApp() {
   const [restingIds, setRestingIds] = useState([]);
   const [attendance, setAttendance] = useState({}); // { [playerId]: { [dayKey]: true } } — นับเข้าร่วมสูงสุด 1 แต้ม/วัน
   const [dailyPrices, setDailyPrices] = useState({}); // { [dayKey]: { courtFee, shuttlePrice } } — ราคาล็อกตามวัน แก้วันนี้ไม่กระทบวันก่อนหน้า
+  const [lastActiveDay, setLastActiveDay] = useState(dayKeyOf(Date.now())); // ใช้เช็คว่าข้ามวันแล้วหรือยัง เพื่อเคลียร์รายชื่อเช็คอิน
 
   const [isSynced, setIsSynced] = useState(false); // โหลดข้อมูลจาก Supabase รอบแรกเสร็จหรือยัง
   const [syncError, setSyncError] = useState(null);
@@ -2177,7 +2239,7 @@ export default function IbabadApp() {
 
   const collectStateForSync = () => ({
     appPassword, players, courts, matchRecords, paidMap,
-    checkedInIds, restingIds, attendance, dailyPrices,
+    checkedInIds, restingIds, attendance, dailyPrices, lastActiveDay,
   });
 
   const applyRemoteState = (data) => {
@@ -2191,6 +2253,27 @@ export default function IbabadApp() {
     if (data.restingIds !== undefined) setRestingIds(data.restingIds);
     if (data.attendance !== undefined) setAttendance(data.attendance);
     if (data.dailyPrices !== undefined) setDailyPrices(data.dailyPrices);
+    if (data.lastActiveDay !== undefined) setLastActiveDay(data.lastActiveDay);
+  };
+
+  // ถ้าข้ามวันไปแล้ว (เทียบกับ lastActiveDay ที่เก็บไว้) ให้เคลียร์รายชื่อเช็คอินของวันเก่าออก
+  // แล้วบันทึกกลับขึ้น Supabase ทันที เพื่อให้ทุกอุปกรณ์เห็นการรีเซ็ตนี้ตรงกัน
+  const applyDayRolloverIfNeeded = async (rawData) => {
+    const today = dayKeyOf(Date.now());
+    if (rawData.lastActiveDay === today) return rawData;
+    const rolledOver = { ...rawData, checkedInIds: [], lastActiveDay: today };
+    try {
+      const { data: upd } = await supabase
+        .from('app_state')
+        .update({ data: rolledOver, updated_at: new Date().toISOString() })
+        .eq('id', APP_STATE_ROW_ID)
+        .select('updated_at')
+        .single();
+      if (upd) lastKnownUpdatedAt.current = upd.updated_at;
+    } catch {
+      // เขียนไม่สำเร็จ ไม่เป็นไร อุปกรณ์อื่นหรือรอบโพลถัดไปจะลองใหม่เอง
+    }
+    return rolledOver;
   };
 
   // โหลดข้อมูลจาก Supabase ตอนเปิดแอปครั้งแรก (ถ้ายังไม่เคยมีแถวข้อมูลเลย จะสร้างแถวเริ่มต้นให้)
@@ -2209,15 +2292,17 @@ export default function IbabadApp() {
         return;
       }
       if (data) {
-        applyRemoteState(data.data || {});
-        lastKnownUpdatedAt.current = data.updated_at;
+        const rolled = await applyDayRolloverIfNeeded(data.data || {});
+        if (cancelled) return;
+        applyRemoteState(rolled);
+        if (rolled === (data.data || {})) lastKnownUpdatedAt.current = data.updated_at;
       } else {
         // ยังไม่เคยมีแถวข้อมูล — สร้างแถวแรกด้วยค่าเริ่มต้นของแอป
         const initial = { appPassword: DEFAULT_PASSWORD, players: initialPlayers, courts: [
           { id: 'c1', name: 'สนาม 1', status: 'waiting', players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all' },
           { id: 'c2', name: 'สนาม 2', status: 'waiting', players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all' },
           { id: 'c3', name: 'สนาม 3', status: 'waiting', players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all' },
-        ], matchRecords: [], paidMap: {}, checkedInIds: [], restingIds: [], attendance: {}, dailyPrices: {} };
+        ], matchRecords: [], paidMap: {}, checkedInIds: [], restingIds: [], attendance: {}, dailyPrices: {}, lastActiveDay: dayKeyOf(Date.now()) };
         const { data: inserted } = await supabase
           .from('app_state')
           .insert({ id: APP_STATE_ROW_ID, data: initial, updated_at: new Date().toISOString() })
@@ -2230,7 +2315,7 @@ export default function IbabadApp() {
     return () => { cancelled = true; };
   }, []);
 
-  // โพลข้อมูลใหม่จากเซิร์ฟเวอร์เป็นระยะ เพื่อรับการเปลี่ยนแปลงจากอุปกรณ์เครื่องอื่น
+  // โพลข้อมูลใหม่จากเซิร์ฟเวอร์เป็นระยะ เพื่อรับการเปลี่ยนแปลงจากอุปกรณ์เครื่องอื่น (และตรวจจับการข้ามวันด้วย)
   useEffect(() => {
     if (!isSynced) return;
     const interval = setInterval(async () => {
@@ -2242,13 +2327,16 @@ export default function IbabadApp() {
       if (error || !data) return;
       const isNewer = data.updated_at !== lastKnownUpdatedAt.current;
       const recentlyWroteOurselves = Date.now() - lastLocalWriteAt.current < RECENT_LOCAL_WRITE_GUARD_MS;
-      if (isNewer && !recentlyWroteOurselves) {
-        applyRemoteState(data.data || {});
-        lastKnownUpdatedAt.current = data.updated_at;
+      const dayChanged = (data.data || {}).lastActiveDay !== dayKeyOf(Date.now());
+      if ((isNewer || dayChanged) && !recentlyWroteOurselves) {
+        const rolled = await applyDayRolloverIfNeeded(data.data || {});
+        applyRemoteState(rolled);
+        if (!dayChanged) lastKnownUpdatedAt.current = data.updated_at;
       }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [isSynced]);
+
 
   // บันทึกขึ้น Supabase (หน่วงเวลาเล็กน้อยเพื่อไม่ยิงถี่เกินไป) ทุกครั้งที่ข้อมูลในเครื่องนี้เปลี่ยน
   useEffect(() => {
@@ -2273,7 +2361,7 @@ export default function IbabadApp() {
       }
     }, SAVE_DEBOUNCE_MS);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [appPassword, players, courts, matchRecords, paidMap, checkedInIds, restingIds, attendance, dailyPrices, isSynced]);
+  }, [appPassword, players, courts, matchRecords, paidMap, checkedInIds, restingIds, attendance, dailyPrices, lastActiveDay, isSynced]);
 
   // เช็คอิน (เปิด) แล้วได้แต้มเข้าร่วมของวันนี้ ถ้ายังไม่เคยได้วันนี้ — เช็คเอาต์ไม่ลบแต้มที่ได้ไปแล้ว
   const toggleCheckIn = (id) => {
@@ -2329,10 +2417,10 @@ export default function IbabadApp() {
       timestamp: Date.now(),
       powerDeltas,
     }]);
-    setPlayers(prev => updateEloForMatch(prev, teamA, teamB, winner));
+    setPlayers(prev => applyRecordStats(updateEloForMatch(prev, teamA, teamB, winner), teamA, teamB, winner, 1));
   };
 
-  // แก้ไขผลแพ้/ชนะ/เสมอของเกมที่จบไปแล้วในหน้าประวัติ — ปรับพลัง (power) ของผู้เล่นในเกมนั้นให้ตรงกับผลใหม่
+  // แก้ไขผลแพ้/ชนะ/เสมอของเกมที่จบไปแล้วในหน้าประวัติ — ปรับพลัง (power) และสถิติแพ้/ชนะของผู้เล่นในเกมนั้นให้ตรงกับผลใหม่
   // หมายเหตุ: คำนวณ delta ใหม่จากพลังปัจจุบันของผู้เล่น (ไม่ได้จำลองย้อนหลังทั้งสายเกมหลังจากนั้นใหม่ทั้งหมด)
   // ส่วนมือ (cls) และแต้มสะสมเลื่อนขั้นจะไม่ถูกแก้ย้อนหลัง เพราะต้องอาศัยลำดับเกมทั้งหมดหลังจากนั้นด้วย
   const editMatchResult = (recordId, newWinner) => {
@@ -2343,17 +2431,52 @@ export default function IbabadApp() {
     record.teamA.forEach(id => { newPowerDeltas[id] = newDeltaA; });
     record.teamB.forEach(id => { newPowerDeltas[id] = newDeltaB; });
 
-    setPlayers(prev => prev.map(p => {
-      const oldDelta = record.powerDeltas?.[p.id];
-      if (oldDelta === undefined) return p;
-      const newDelta = newPowerDeltas[p.id];
-      return { ...p, power: Math.max(MIN_POWER, p.power - oldDelta + newDelta) };
-    }));
+    setPlayers(prev => {
+      let updated = prev.map(p => {
+        const oldDelta = record.powerDeltas?.[p.id];
+        if (oldDelta === undefined) return p;
+        const newDelta = newPowerDeltas[p.id];
+        return { ...p, power: Math.max(MIN_POWER, p.power - oldDelta + newDelta) };
+      });
+      updated = applyRecordStats(updated, record.teamA, record.teamB, record.winner, -1); // ถอนผลเดิม
+      updated = applyRecordStats(updated, record.teamA, record.teamB, newWinner, 1);       // ใส่ผลใหม่
+      return updated;
+    });
     setMatchRecords(prev => prev.map(r => r.id === recordId ? { ...r, winner: newWinner, powerDeltas: newPowerDeltas } : r));
   };
 
-  // ลบประวัติทั้งวัน — เอาแมทช์ของวันนั้นออกจาก matchRecords ทั้งหมด (ยอดเงิน/สถิติ/ทำเนียบที่คำนวณจาก matchRecords จะหายไปเองตามไปด้วย)
+  // ลบเกมเดียว — ถอนพลัง (ELO) และสถิติแพ้/ชนะของเกมนั้นออกจากผู้เล่นทั้ง 4 คน แล้วเอาแมทช์นั้นออกจากประวัติ
+  // ยอดเงินไม่ต้องแก้เพิ่ม เพราะคำนวณสดจาก matchRecords อยู่แล้ว พอลบเกมออกยอดจะหายไปเอง
+  const deleteMatchRecord = (recordId) => {
+    const record = matchRecords.find(r => r.id === recordId);
+    if (!record) return;
+    setPlayers(prev => {
+      let updated = prev.map(p => {
+        const oldDelta = record.powerDeltas?.[p.id];
+        if (oldDelta === undefined) return p;
+        return { ...p, power: Math.max(MIN_POWER, p.power - oldDelta) };
+      });
+      return applyRecordStats(updated, record.teamA, record.teamB, record.winner, -1);
+    });
+    setMatchRecords(prev => prev.filter(r => r.id !== recordId));
+  };
+
+  // ลบประวัติทั้งวัน — ถอนพลัง/สถิติของทุกเกมวันนั้นออกจากผู้เล่นก่อน แล้วค่อยเอาแมทช์ของวันนั้นออกจาก matchRecords ทั้งหมด
   const deleteDayRecords = (dayKey) => {
+    const dayRecords = matchRecords.filter(r => dayKeyOf(r.timestamp) === dayKey);
+    if (dayRecords.length === 0) return;
+    setPlayers(prev => {
+      let updated = prev;
+      dayRecords.forEach(record => {
+        updated = updated.map(p => {
+          const oldDelta = record.powerDeltas?.[p.id];
+          if (oldDelta === undefined) return p;
+          return { ...p, power: Math.max(MIN_POWER, p.power - oldDelta) };
+        });
+        updated = applyRecordStats(updated, record.teamA, record.teamB, record.winner, -1);
+      });
+      return updated;
+    });
     setMatchRecords(prev => prev.filter(r => dayKeyOf(r.timestamp) !== dayKey));
   };
 
@@ -2498,11 +2621,11 @@ export default function IbabadApp() {
 
       <main className="flex-1 pb-24 md:pb-0">
         <div className="p-4 md:p-8 max-w-6xl mx-auto">
-          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} />}
+          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} />}
           {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} />}
           {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} />}
           {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} />}
-          {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} />}
+          {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} onDeleteMatch={deleteMatchRecord} />}
         </div>
       </main>
 
