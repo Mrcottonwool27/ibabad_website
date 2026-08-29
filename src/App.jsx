@@ -1105,6 +1105,12 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
     const isIn = checkedInIds.includes(p.id);
     return (
       <div key={p.id} className={`p-3 rounded-xl border-2 transition-colors ${isIn ? 'bg-cyan-950/40 border-cyan-500/50' : 'bg-slate-900 border-slate-700/50'}`}>
+        {isIn && (
+          <button onClick={() => onToggleCheckIn(p.id)}
+            className="w-full mb-2 flex items-center justify-center gap-1 text-xs font-bold px-2 py-1.5 rounded-lg border-2 border-rose-500/50 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20">
+            <X className="w-3.5 h-3.5" /> ยกเลิกเช็คอิน
+          </button>
+        )}
         <div className="flex items-center gap-3 mb-3">
           <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
           <div className="min-w-0">
@@ -2285,8 +2291,10 @@ export default function IbabadApp() {
   const applyDayRolloverIfNeeded = async (rawData) => {
     const today = dayKeyOf(Date.now());
     if (rawData.lastActiveDay === today) return rawData;
-    // ขึ้นวันใหม่: เคลียร์ทั้งรายชื่อเช็คอินและสถานะจ่ายเงินของเมื่อวาน — ไม่งั้นคนที่จ่ายแล้วเมื่อวานจะถูกซ่อนจาก "รอลงเกม" ไปตลอดแม้เช็คอินวันใหม่แล้วก็ตาม
-    const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, lastActiveDay: today };
+    // ขึ้นวันใหม่: เคลียร์รายชื่อเช็คอิน สถานะจ่ายเงิน และล้างผู้เล่นที่ค้างอยู่ในสนามจากเมื่อวาน
+    // (ถ้าไม่ล้างสนาม คนที่ยังค้างอยู่ในสนามเก่าจะถูกนับว่า "ลงคอร์ทอยู่แล้ว" ตลอดไป ทำให้ไม่โผล่ใน "รอลงเกม" แม้เช็คอินวันใหม่แล้วก็ตาม)
+    const clearedCourts = (rawData.courts || []).map(c => ({ ...c, status: 'waiting', players: [null, null, null, null], shuttlecocks: 1 }));
+    const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, courts: clearedCourts, lastActiveDay: today };
     try {
       const { data: upd } = await supabase
         .from('app_state')
