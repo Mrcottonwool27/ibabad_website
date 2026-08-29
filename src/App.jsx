@@ -1080,7 +1080,7 @@ function DeleteConfirmModal({ player, onConfirm, onClose }) {
   );
 }
 
-function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer, attendance }) {
+function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer, attendance, onManualDayReset }) {
   const [query, setQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -1146,10 +1146,17 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
           <h3 className="text-lg font-black uppercase tracking-wider text-white flex items-center gap-2">
             <span className="w-2 h-5 bg-cyan-600 rounded-sm" /> เช็คอินสมาชิกวันนี้
           </h3>
-          <button onClick={() => setShowAddModal(true)}
-            className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5">
-            <Plus className="w-4 h-4" /> เพิ่มสมาชิกใหม่
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => { if (window.confirm('รีเซ็ตวันใหม่เลยตอนนี้? จะล้างรายชื่อเช็คอิน สถานะจ่ายเงิน และสนามทั้งหมด (ไม่กระทบพลัง/สถิติ/ประวัติ)')) onManualDayReset(); }}
+              title="รีเซ็ตวันใหม่ด้วยตัวเอง (ล้างเช็คอิน/จ่ายเงิน/สนาม)"
+              className="text-slate-300 hover:text-rose-400 text-xs font-bold px-3 py-2.5 rounded-lg border-2 border-slate-700/60 flex items-center gap-1.5">
+              <RefreshCw className="w-4 h-4" /> รีเซ็ตวันใหม่
+            </button>
+            <button onClick={() => setShowAddModal(true)}
+              className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5">
+              <Plus className="w-4 h-4" /> เพิ่มสมาชิกใหม่
+            </button>
+          </div>
         </div>
         <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyan-500" />
@@ -2288,10 +2295,10 @@ export default function IbabadApp() {
 
   // ถ้าข้ามวันไปแล้ว (เทียบกับ lastActiveDay ที่เก็บไว้) ให้เคลียร์รายชื่อเช็คอินของวันเก่าออก
   // แล้วบันทึกกลับขึ้น Supabase ทันที เพื่อให้ทุกอุปกรณ์เห็นการรีเซ็ตนี้ตรงกัน
-  const applyDayRolloverIfNeeded = async (rawData) => {
+  const applyDayRolloverIfNeeded = async (rawData, force = false) => {
     const today = dayKeyOf(Date.now());
-    if (rawData.lastActiveDay === today) return rawData;
-    // ขึ้นวันใหม่: เคลียร์รายชื่อเช็คอิน สถานะจ่ายเงิน และล้างผู้เล่นที่ค้างอยู่ในสนามจากเมื่อวาน
+    if (!force && rawData.lastActiveDay === today) return rawData;
+    // ขึ้นวันใหม่ (หรือกดรีเซ็ตเอง): เคลียร์รายชื่อเช็คอิน สถานะจ่ายเงิน และล้างผู้เล่นที่ค้างอยู่ในสนามจากเมื่อวาน
     // (ถ้าไม่ล้างสนาม คนที่ยังค้างอยู่ในสนามเก่าจะถูกนับว่า "ลงคอร์ทอยู่แล้ว" ตลอดไป ทำให้ไม่โผล่ใน "รอลงเกม" แม้เช็คอินวันใหม่แล้วก็ตาม)
     const clearedCourts = (rawData.courts || []).map(c => ({ ...c, status: 'waiting', players: [null, null, null, null], shuttlecocks: 1 }));
     const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, courts: clearedCourts, lastActiveDay: today };
@@ -2308,6 +2315,12 @@ export default function IbabadApp() {
       console.error('Day-rollover write threw:', err); // เขียนไม่สำเร็จ — โชว์ error ให้เห็นแทนที่จะเงียบ
     }
     return rolledOver;
+  };
+
+  // ปุ่มกดเองเพื่อรีเซ็ตวันใหม่ทันที (เช็คอิน/สถานะจ่ายเงิน/สนาม) — ใช้ตอนต้องการทดสอบ หรือถ้าระบบรีเซ็ตอัตโนมัติตอนเที่ยงคืนมีปัญหา
+  const manualDayReset = async () => {
+    const rolled = await applyDayRolloverIfNeeded(collectStateForSync(), true);
+    applyRemoteState(rolled);
   };
 
   // โหลดข้อมูลจาก Supabase ตอนเปิดแอปครั้งแรก (ถ้ายังไม่เคยมีแถวข้อมูลเลย จะสร้างแถวเริ่มต้นให้)
@@ -2655,7 +2668,7 @@ export default function IbabadApp() {
 
       <main className="flex-1 pb-24 md:pb-0">
         <div className="p-4 md:p-8 max-w-6xl mx-auto">
-          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} />}
+          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} onManualDayReset={manualDayReset} />}
           {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} matchRecords={matchRecords} />}
           {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} />}
           {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} />}
