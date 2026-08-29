@@ -2296,15 +2296,16 @@ export default function IbabadApp() {
     const clearedCourts = (rawData.courts || []).map(c => ({ ...c, status: 'waiting', players: [null, null, null, null], shuttlecocks: 1 }));
     const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, courts: clearedCourts, lastActiveDay: today };
     try {
-      const { data: upd } = await supabase
+      const { data: upd, error } = await supabase
         .from('app_state')
         .update({ data: rolledOver, updated_at: new Date().toISOString() })
         .eq('id', APP_STATE_ROW_ID)
         .select('updated_at')
         .single();
+      if (error) console.error('Day-rollover write failed:', error);
       if (upd) lastKnownUpdatedAt.current = upd.updated_at;
-    } catch {
-      // เขียนไม่สำเร็จ ไม่เป็นไร อุปกรณ์อื่นหรือรอบโพลถัดไปจะลองใหม่เอง
+    } catch (err) {
+      console.error('Day-rollover write threw:', err); // เขียนไม่สำเร็จ — โชว์ error ให้เห็นแทนที่จะเงียบ
     }
     return rolledOver;
   };
