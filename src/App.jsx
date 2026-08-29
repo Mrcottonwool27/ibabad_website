@@ -2285,7 +2285,8 @@ export default function IbabadApp() {
   const applyDayRolloverIfNeeded = async (rawData) => {
     const today = dayKeyOf(Date.now());
     if (rawData.lastActiveDay === today) return rawData;
-    const rolledOver = { ...rawData, checkedInIds: [], lastActiveDay: today };
+    // ขึ้นวันใหม่: เคลียร์ทั้งรายชื่อเช็คอินและสถานะจ่ายเงินของเมื่อวาน — ไม่งั้นคนที่จ่ายแล้วเมื่อวานจะถูกซ่อนจาก "รอลงเกม" ไปตลอดแม้เช็คอินวันใหม่แล้วก็ตาม
+    const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, lastActiveDay: today };
     try {
       const { data: upd } = await supabase
         .from('app_state')
