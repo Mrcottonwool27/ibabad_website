@@ -31,9 +31,11 @@ function clsFromPower(power) {
 
 // ระดับความยากของ AI Auto-Match: กรองผู้เล่นที่จะพิจารณาจับคู่ตามช่วงมือ
 const DIFFICULTY_RANGES = {
-  light: [TIERS.indexOf('BG1'), TIERS.indexOf('NB')],           // เกมเบา: BG1–NB
-  medium: [TIERS.indexOf('NB'), TIERS.length - 1],              // เกมกลาง: NB ขึ้นไป
-  heavy: [TIERS.indexOf('N'), TIERS.length - 1],                // เกมหนัก: N ขึ้นไป
+  light: [TIERS.indexOf('BG1'), TIERS.indexOf('NB')],         // เกมเบา: BG1, BG2, NB
+  medium: [TIERS.indexOf('N-'), TIERS.indexOf('N+')],         // เกมกลาง: N-, N, N+
+  heavy: [TIERS.indexOf('N+'), TIERS.indexOf('C')],           // เกมหนัก: N+, S-, S, P-, P, C
+  lightMedium: [TIERS.indexOf('BG1'), TIERS.indexOf('N+')],   // เกมผสมเบากลาง: BG1–N+
+  mediumHeavy: [TIERS.indexOf('N-'), TIERS.indexOf('C')],     // กลางหนัก: N- ถึง C
 };
 function filterByDifficulty(list, difficulty) {
   const range = DIFFICULTY_RANGES[difficulty];
@@ -56,6 +58,20 @@ const APP_STATE_ROW_ID = 1;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 800;
 const RECENT_LOCAL_WRITE_GUARD_MS = 2500; // กันไม่ให้ผลโพลไปทับข้อมูลที่เพิ่งเขียนไปเองสดๆ
+const AI_COOLDOWN_MS = 5 * 60 * 1000; // พักหลังจบเกม 5 นาที ก่อนที่ AI Auto-Match จะเลือกคนนี้ได้อีก (ยังใส่มือเองได้ตลอด)
+
+// เวลาที่ผู้เล่นคนนี้เล่นจบเกมล่าสุด (ใช้ timestamp ของแมทช์นั้นจากประวัติ) — null ถ้ายังไม่เคยเล่นเลย
+function lastFinishedAt(playerId, matchRecords) {
+  let latest = null;
+  matchRecords.forEach(r => {
+    if (r.playerIds?.includes(playerId) && (latest === null || r.timestamp > latest)) latest = r.timestamp;
+  });
+  return latest;
+}
+function isInAICooldown(playerId, matchRecords, now = Date.now()) {
+  const t = lastFinishedAt(playerId, matchRecords);
+  return t !== null && (now - t) < AI_COOLDOWN_MS;
+}
 
 const initialPlayers = [
   { id: 1, name: "P", cls: "P", gender: "M", played: 14, w: 11, l: 3, avatar: "🎩", bestDuo: "New", rival: "DREAM", weapon: "Yonex Nanoflare", blocked: [], isVeteran: false },
@@ -467,14 +483,8 @@ function pickCrossTierQuartet(waiting, togetherCounts = {}, todayGroupStats = {}
   return best || fallback;
 }
 
-// matchType: 'open' | 'men' | 'women' | 'mixed' | difficulty: 'all' | 'light' | 'medium' | 'heavy' | 'cross' (เกมผสม)
+// matchType: 'open' | 'men' | 'women' | 'mixed' | difficulty: 'all' | 'light' | 'medium' | 'heavy' | 'lightMedium' | 'mediumHeavy'
 function pickQuartetByType(waiting, matchType, difficulty = 'all', togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}) {
-  if (difficulty === 'cross') {
-    let pool = waiting;
-    if (matchType === 'men') pool = pool.filter(p => p.gender === 'M');
-    if (matchType === 'women') pool = pool.filter(p => p.gender === 'F');
-    return pickCrossTierQuartet(pool, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-  }
   const pool = filterByDifficulty(waiting, difficulty);
   if (matchType === 'men') return pickBalancedQuartet(pool.filter(p => p.gender === 'M'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
   if (matchType === 'women') return pickBalancedQuartet(pool.filter(p => p.gender === 'F'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
@@ -1077,14 +1087,50 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
   const [deleteTarget, setDeleteTarget] = useState(null);
   const attendanceCount = (id) => Object.keys(attendance[id] || {}).length;
   const filtered = players
+    .filter(p => !checkedInIds.includes(p.id))
     .filter(p => p.name.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => attendanceCount(b.id) - attendanceCount(a.id));
-  const checkedInPlayers = players.filter(p => checkedInIds.includes(p.id));
+  const checkedInPlayers = players
+    .filter(p => checkedInIds.includes(p.id))
+    .sort((a, b) => attendanceCount(b.id) - attendanceCount(a.id));
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
     onDeletePlayer(deleteTarget.id);
     setDeleteTarget(null);
+  };
+
+  // การ์ดผู้เล่นแบบเดียวกัน ใช้ได้ทั้งลิสต์ "ยังไม่เช็คอิน" และ "เช็คอินแล้ว"
+  const renderCard = (p) => {
+    const isIn = checkedInIds.includes(p.id);
+    return (
+      <div key={p.id} className={`p-3 rounded-xl border-2 transition-colors ${isIn ? 'bg-cyan-950/40 border-cyan-500/50' : 'bg-slate-900 border-slate-700/50'}`}>
+        <div className="flex items-center gap-3 mb-3">
+          <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
+          <div className="min-w-0">
+            <p className="font-bold text-base text-white truncate">{p.name}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-xs font-bold text-cyan-500">มือ {p.cls}</span>
+              <span className={`text-sm font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => onOpenProfile(p.id)} className="text-cyan-500 hover:text-cyan-400"><Info className="w-4 h-4" /></button>
+          <button onClick={() => setEditTarget(p)} className="text-cyan-500 hover:text-cyan-400"><Pencil className="w-4 h-4" /></button>
+          <button onClick={() => setDeleteTarget(p)}
+            className="p-1.5 rounded-lg border-2 flex items-center gap-1 text-rose-400 border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onToggleCheckIn(p.id)}
+            className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 ${isIn ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/20'}`}
+          >
+            {isIn ? <><CheckCircle2 className="w-4 h-4" /> เช็คอินแล้ว</> : <><Plus className="w-4 h-4" /> เพิ่ม</>}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -1115,38 +1161,8 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
           )}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map(p => {
-            const isIn = checkedInIds.includes(p.id);
-            return (
-              <div key={p.id} className={`p-3 rounded-xl border-2 transition-colors ${isIn ? 'bg-cyan-950/40 border-cyan-500/50' : 'bg-slate-900 border-slate-700/50'}`}>
-                <div className="flex items-center gap-3 mb-3">
-                  <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
-                  <div className="min-w-0">
-                    <p className="font-bold text-base text-white truncate">{p.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs font-bold text-cyan-500">มือ {p.cls}</span>
-                      <span className={`text-sm font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => onOpenProfile(p.id)} className="text-cyan-500 hover:text-cyan-400"><Info className="w-4 h-4" /></button>
-                  <button onClick={() => setEditTarget(p)} className="text-cyan-500 hover:text-cyan-400"><Pencil className="w-4 h-4" /></button>
-                  <button onClick={() => setDeleteTarget(p)}
-                    className="p-1.5 rounded-lg border-2 flex items-center gap-1 text-rose-400 border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => onToggleCheckIn(p.id)}
-                    className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 ${isIn ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/20'}`}
-                  >
-                    {isIn ? <><CheckCircle2 className="w-4 h-4" /> เช็คอินแล้ว</> : <><Plus className="w-4 h-4" /> เพิ่ม</>}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          {filtered.length === 0 && <p className="col-span-full text-center text-cyan-500 text-sm py-6">ไม่พบชื่อนี้</p>}
+          {filtered.map(renderCard)}
+          {filtered.length === 0 && <p className="col-span-full text-center text-cyan-500 text-sm py-6">ไม่พบชื่อนี้ หรือทุกคนเช็คอินแล้ว</p>}
         </div>
       </div>
 
@@ -1161,13 +1177,8 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
             <p className="text-sm text-slate-300">ยังไม่มีใครเช็คอิน — ค้นหาชื่อด้านบนแล้วกด "เพิ่ม" ได้เลย</p>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {checkedInPlayers.map(p => (
-              <span key={p.id} className="flex items-center gap-1.5 text-sm bg-slate-900 border-2 border-cyan-500/40 px-3 py-1.5 rounded-full text-cyan-400">
-                {p.avatar} {p.name}
-                <button onClick={() => onToggleCheckIn(p.id)} className="text-cyan-500 hover:text-rose-400"><X className="w-3.5 h-3.5" /></button>
-              </span>
-            ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {checkedInPlayers.map(renderCard)}
           </div>
         )}
         <p className="text-xs text-cyan-500 mt-3">คนที่เช็คอินแล้วจะไปโผล่ในคิว "รอลงเกม" ที่หน้าแอดมินให้อัตโนมัติ</p>
@@ -1416,7 +1427,7 @@ function DayDetailModal({ dayKey, records, players, onClose, onEditResult, daily
     <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl max-w-2xl w-full p-6 relative max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-4 right-4 text-slate-300 hover:text-white"><X className="w-5 h-5" /></button>
-        <div className="flex items-start justify-between gap-3 pr-8 mb-1">
+        <div className="flex items-start justify-between gap-3 pr-14 mb-1">
           <h2 className="text-lg font-black text-white">{formatThaiDateLong(dayKey)}</h2>
           <button onClick={() => setShowDeleteDay(true)} className="shrink-0 text-xs font-bold px-2.5 py-1.5 rounded-lg border-2 border-rose-600/60 text-rose-400 hover:bg-rose-950/40 flex items-center gap-1">
             <Trash2 className="w-3.5 h-3.5" /> ลบทั้งวัน
@@ -1690,18 +1701,18 @@ function SlotPickerModal({ waiting, currentPlayer, onSelect, onClear, onClose })
   );
 }
 
-function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpenProfile, pairStats, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, restingIds, onToggleResting, paidMap }) {
-  const [dragged, setDragged] = useState(null);
+function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpenProfile, pairStats, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, restingIds, onToggleResting, paidMap, matchRecords }) {
+  const draggedRef = useRef(null); // เก็บสิ่งที่กำลังลากไว้แบบ ref (ไม่ใช้ state) ให้ทำงานได้ทั้งเมาส์และนิ้วบนจอสัมผัส
   const [pickerTarget, setPickerTarget] = useState(null); // { courtId, slotIndex } | null
   const [editingCourtNameId, setEditingCourtNameId] = useState(null);
   const [courtNameDraft, setCourtNameDraft] = useState('');
 
   const placedIds = new Set(courts.flatMap(c => c.players.filter(Boolean).map(p => p.id)));
   const waiting = players.filter(p => checkedInIds.includes(p.id) && !placedIds.has(p.id) && !paidMap[p.id]);
-  const waitingForAI = waiting.filter(p => !restingIds.includes(p.id)); // AI Auto-Match ไม่จับคนที่กด "พักก่อน" ไว้
+  const waitingForAI = waiting.filter(p => !restingIds.includes(p.id) && !isInAICooldown(p.id, matchRecords)); // AI Auto-Match ไม่จับคนที่กด "พักก่อน" หรือยังอยู่ในคูลดาวน์ 5 นาทีหลังเล่นจบ
 
-  const startDragFromWaiting = (player) => setDragged({ type: 'waiting', player });
-  const startDragFromCourt = (courtId, slotIndex, player) => setDragged({ type: 'court', courtId, slotIndex, player });
+  const startDragFromWaiting = (player) => { draggedRef.current = { type: 'waiting', player }; };
+  const startDragFromCourt = (courtId, slotIndex, player) => { draggedRef.current = { type: 'court', courtId, slotIndex, player }; };
 
   const startEditCourtName = (court) => { setEditingCourtNameId(court.id); setCourtNameDraft(court.name); };
   const saveCourtName = (id) => {
@@ -1741,6 +1752,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   };
 
   const dropOnCourtSlot = (courtId, slotIndex) => {
+    const dragged = draggedRef.current;
     if (!dragged) return;
     setCourts(prev => {
       const next = prev.map(c => ({ ...c, players: [...c.players] }));
@@ -1757,11 +1769,12 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
       }
       return next.map(recomputeStatus);
     });
-    setDragged(null);
+    draggedRef.current = null;
   };
 
   const dropOnWaiting = () => {
-    if (!dragged || dragged.type !== 'court') { setDragged(null); return; }
+    const dragged = draggedRef.current;
+    if (!dragged || dragged.type !== 'court') { draggedRef.current = null; return; }
     setCourts(prev => {
       const next = prev.map(c => ({ ...c, players: [...c.players] }));
       const source = next.find(c => c.id === dragged.courtId);
@@ -1769,7 +1782,25 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
       source.players[dragged.slotIndex] = null;
       return next.map(recomputeStatus);
     });
-    setDragged(null);
+    draggedRef.current = null;
+  };
+
+  // เริ่มลากด้วย Pointer Events แทน HTML5 drag-and-drop เดิม เพราะ HTML5 DnD ใช้ไม่ได้บนจอสัมผัส (เช่น iPad)
+  // ทำงานได้ทั้งเมาส์และนิ้ว: กดค้าง (pointerdown) แล้วปล่อยตรงเป้าหมาย (pointerup) จะ hit-test ว่าอยู่บนโซนไหน
+  const beginPointerDrag = (e, startFn) => {
+    e.preventDefault();
+    startFn();
+    const handleUp = (upEvent) => {
+      window.removeEventListener('pointerup', handleUp);
+      const el = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
+      const zone = el && el.closest ? el.closest('[data-dropzone]') : null;
+      if (!zone) { draggedRef.current = null; return; }
+      const dz = zone.getAttribute('data-dropzone');
+      if (dz === 'waiting') { dropOnWaiting(); return; }
+      const [, courtId, slotIndexStr] = dz.split(':');
+      dropOnCourtSlot(courtId, Number(slotIndexStr));
+    };
+    window.addEventListener('pointerup', handleUp);
   };
 
   const autoMatch = (courtId) => {
@@ -1797,18 +1828,6 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   const canAutoMatch = (matchType, difficulty = 'all', filledCount = 0) => {
     const needed = 4 - filledCount;
     if (needed <= 0) return false;
-    if (difficulty === 'cross') {
-      let pool = waitingForAI;
-      if (matchType === 'men') pool = pool.filter(p => p.gender === 'M');
-      if (matchType === 'women') pool = pool.filter(p => p.gender === 'F');
-      const lowMaxIdx = TIERS.indexOf('NB');
-      const highMinIdx = TIERS.indexOf('N');
-      const lowCount = pool.filter(p => TIERS.indexOf(p.cls) <= lowMaxIdx).length;
-      const highCount = pool.filter(p => TIERS.indexOf(p.cls) >= highMinIdx).length;
-      // ต้องมีอย่างน้อยฝั่งละ 1 (ถ้าเติมแค่ 1-2 ช่อง อาจไม่ต้องครบ 2-2 เป๊ะ) แต่ถ้าเติมทั้ง 4 ช่องต้องได้ฝั่งละ 2
-      if (filledCount === 0) return lowCount >= 2 && highCount >= 2;
-      return (lowCount + highCount) >= needed;
-    }
     const pool = filterByDifficulty(waitingForAI, difficulty);
     const menCount = pool.filter(p => p.gender === 'M').length;
     const womenCount = pool.filter(p => p.gender === 'F').length;
@@ -1927,11 +1946,12 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                       onChange={(e) => setDifficulty(court.id, e.target.value)}
                       className="bg-slate-950 border-2 border-slate-700/60 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-cyan-500"
                     >
-                      <option value="all">ทุกระดับ</option>
                       <option value="light">เกมเบา (BG1-NB)</option>
-                      <option value="medium">เกมกลาง (NB ขึ้นไป)</option>
-                      <option value="heavy">เกมหนัก (N ขึ้นไป)</option>
-                      <option value="cross">เกมผสม (มือต่ำพบมือสูง)</option>
+                      <option value="medium">เกมกลาง (N- ถึง N+)</option>
+                      <option value="heavy">เกมหนัก (N+ ถึง C)</option>
+                      <option value="lightMedium">เกมผสมเบากลาง (BG1 ถึง N+)</option>
+                      <option value="mediumHeavy">กลางหนัก (N- ถึง C)</option>
+                      <option value="all">ทุกระดับ</option>
                     </select>
                     <select
                       value={court.matchType}
@@ -1974,12 +1994,14 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                 const editable = court.status !== 'playing';
                 return (
                   <div key={index}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => dropOnCourtSlot(court.id, index)}
+                    data-dropzone={`court:${court.id}:${index}`}
                     onClick={() => { if (editable && !p) setPickerTarget({ courtId: court.id, slotIndex: index }); }}
                     className={`min-h-[6.5rem] rounded-xl border-2 flex items-center relative px-3 py-2 transition-all ${p ? `${team.border} ${team.bg} border-solid` : 'border-dashed border-slate-700/30 hover:border-cyan-500/50 bg-slate-950/10 justify-center'} ${editable && !p ? 'cursor-pointer' : ''}`}>
                     {p ? (
-                      <div draggable={court.status !== 'playing'} onDragStart={() => startDragFromCourt(court.id, index, p)} className="flex items-center gap-3 w-full cursor-grab active:cursor-grabbing">
+                      <div
+                        onPointerDown={(e) => editable && beginPointerDrag(e, () => startDragFromCourt(court.id, index, p))}
+                        className={`flex items-center gap-3 w-full touch-none select-none ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                      >
                         <GripHorizontal className="w-3 h-3 text-slate-300 absolute top-1 right-1" />
                         <Avatar player={p} size="w-16 h-16" textSize="text-3xl" ring="" />
                         <div className="flex flex-col min-w-0 flex-1">
@@ -2015,8 +2037,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
 
       <div
         className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl p-4"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={dropOnWaiting}
+        data-dropzone="waiting"
       >
         <div className="flex items-center justify-between mb-4 border-b border-slate-700/50 pb-2">
           <h2 className="font-bold text-white flex items-center gap-2"><Users className="w-5 h-5 text-cyan-600" /> รอลงเกม</h2>
@@ -2025,9 +2046,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {waiting.map(p => {
             const isResting = restingIds.includes(p.id);
+            const cooling = isInAICooldown(p.id, matchRecords);
+            const cooldownMinsLeft = cooling ? Math.ceil((AI_COOLDOWN_MS - (Date.now() - lastFinishedAt(p.id, matchRecords))) / 60000) : 0;
             return (
-              <div key={p.id} draggable onDragStart={() => startDragFromWaiting(p)}
-                className={`border-2 p-3 rounded-xl flex items-center gap-3 cursor-grab active:cursor-grabbing group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
+              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))}
+                className={`border-2 p-3 rounded-xl flex items-center gap-3 cursor-grab active:cursor-grabbing touch-none select-none group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
                 <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -2035,9 +2058,10 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                     <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
                     {p.isVeteran && <span className="text-xs shrink-0" title="สายเทคนิค/ลดความเร็ว">🪫</span>}
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1">
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                     <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>
                     {isResting && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">พัก</span>}
+                    {!isResting && cooling && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-orange-600/50 text-orange-400" title="AI Auto-Match จะยังไม่เลือกคนนี้จนกว่าจะครบ 5 นาที แต่ใส่เองได้ตลอด">คูลดาวน์ {cooldownMinsLeft} น.</span>}
                   </div>
                 </div>
                 <div className="flex flex-col items-center gap-2 shrink-0">
@@ -2622,7 +2646,7 @@ export default function IbabadApp() {
       <main className="flex-1 pb-24 md:pb-0">
         <div className="p-4 md:p-8 max-w-6xl mx-auto">
           {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} />}
-          {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} />}
+          {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} matchRecords={matchRecords} />}
           {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} />}
           {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} />}
           {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} onDeleteMatch={deleteMatchRecord} />}
