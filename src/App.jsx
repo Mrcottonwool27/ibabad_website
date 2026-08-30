@@ -1982,7 +1982,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           const COURT_TONES = ['bg-slate-900', 'bg-slate-800/70', 'bg-indigo-950/30', 'bg-cyan-950/20', 'bg-slate-900/60'];
           const tone = COURT_TONES[courtIdx % COURT_TONES.length];
           return (
-          <div key={court.id} className={`${tone} border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-700/60'}`}>
+          <div key={court.id} className={`${tone} border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-cyan-500/40 shadow-[0_0_12px_rgba(34,211,238,0.18)]'}`}>
             <div className="flex flex-wrap justify-between items-center mb-4 gap-3">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-black text-cyan-500 bg-cyan-950/40 border-2 border-cyan-700/40 px-2 py-1 rounded-lg shrink-0">เกมที่ {courtIdx + 1}</span>
