@@ -2459,6 +2459,7 @@ export default function IbabadApp() {
   const isApplyingRemote = useRef(false);   // true ระหว่างที่กำลังเอาข้อมูลจากเซิร์ฟเวอร์มาใส่ state (กันไม่ให้เขียนวนกลับไป)
   const lastLocalWriteAt = useRef(0);       // เวลาที่เครื่องนี้เขียนขึ้นเซิร์ฟเวอร์ล่าสุด (กันโพลทับข้อมูลสดๆ ของตัวเอง)
   const lastKnownUpdatedAt = useRef(null);  // updated_at ล่าสุดที่เครื่องนี้รู้ (เทียบว่าของเซิร์ฟเวอร์ใหม่กว่าไหม)
+  const deletedRecordIdsRef = useRef(new Set()); // id ของแมทช์ที่เพิ่งลบไปในเครื่องนี้ — กันไม่ให้ mergeForWrite ไปดึงของเก่าจากเซิร์ฟเวอร์กลับมา "ฟื้นคืนชีพ" ตอนผสานข้อมูล
   const saveTimer = useRef(null);
 
   const collectStateForSync = () => ({
@@ -2593,6 +2594,10 @@ export default function IbabadApp() {
       const dayChanged = (data.data || {}).lastActiveDay !== dayKeyOf(Date.now());
       if ((isNewer || dayChanged) && !recentlyWroteOurselves) {
         const rolled = await applyDayRolloverIfNeeded(data.data || {});
+        // กันของที่เพิ่งลบไปเองในเครื่องนี้ (ยังไม่ทันบันทึกขึ้นเซิร์ฟเวอร์) ไม่ให้โพลรอบนี้ดึงกลับมาจากของเก่า
+        if (deletedRecordIdsRef.current.size > 0 && rolled.matchRecords) {
+          rolled.matchRecords = rolled.matchRecords.filter(r => !deletedRecordIdsRef.current.has(r.id));
+        }
         applyRemoteState(rolled);
         if (!dayChanged) lastKnownUpdatedAt.current = data.updated_at;
       }
@@ -2610,6 +2615,7 @@ export default function IbabadApp() {
     const recMap = new Map();
     (remote.matchRecords || []).forEach(r => recMap.set(r.id, r));
     (local.matchRecords || []).forEach(r => recMap.set(r.id, r)); // ของเครื่องนี้ทับได้ถ้า id ซ้ำ (เพิ่งแก้ไข/ลบสด)
+    deletedRecordIdsRef.current.forEach(id => recMap.delete(id)); // เพิ่งลบไปเองในเครื่องนี้ ห้ามให้ของเก่าจากเซิร์ฟเวอร์ฟื้นกลับมา
     const matchRecordsMerged = Array.from(recMap.values());
     // ผู้เล่น: ต่อคน ใครเล่นไปเยอะกว่า (played สูงกว่า) ถือว่ามีประวัติครบกว่า ใช้ฝั่งนั้น กันพลัง/สถิติแพ้ชนะถูกเขียนทับด้วยข้อมูลเก่ากว่า
     const remoteMap = new Map((remote.players || []).map(p => [p.id, p]));
@@ -2763,6 +2769,7 @@ export default function IbabadApp() {
   const deleteMatchRecord = (recordId) => {
     const record = matchRecords.find(r => r.id === recordId);
     if (!record) return;
+    deletedRecordIdsRef.current.add(recordId); // จำไว้กันไม่ให้ตอนบันทึกขึ้นเซิร์ฟเวอร์ไปดึงของเก่ากลับมา
     setPlayers(prev => {
       let updated = prev.map(p => {
         const oldDelta = record.powerDeltas?.[p.id];
@@ -2778,6 +2785,7 @@ export default function IbabadApp() {
   const deleteDayRecords = (dayKey) => {
     const dayRecords = matchRecords.filter(r => dayKeyOf(r.timestamp) === dayKey);
     if (dayRecords.length === 0) return;
+    dayRecords.forEach(r => deletedRecordIdsRef.current.add(r.id)); // จำไว้กันไม่ให้ตอนบันทึกขึ้นเซิร์ฟเวอร์ไปดึงของเก่ากลับมา
     setPlayers(prev => {
       let updated = prev;
       dayRecords.forEach(record => {
