@@ -1719,18 +1719,18 @@ function LeaderboardPage({ players, attendance, onEditPlayer }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead className="text-xs text-slate-300 uppercase bg-slate-950">
-            <tr><th className="px-4 py-3">#</th><th className="px-4 py-3">ชื่อ</th><th className="px-4 py-3 text-center">มือ</th><th className="px-4 py-3 text-right">พลัง</th><th className="px-4 py-3 text-center">W/L (%)</th><th className="px-4 py-3 text-center">เข้าร่วม</th><th className="px-4 py-3 text-center">แก้ไข</th></tr>
+            <tr><th className="px-4 py-3">#</th><th className="px-4 py-3">ชื่อ</th><th className="px-4 py-3 text-center">มือ</th><th className="px-4 py-3 text-right">พลัง</th><th className="px-4 py-3 text-center">ชนะ/เสมอ/แพ้</th><th className="px-4 py-3 text-center">เข้าร่วม</th><th className="px-4 py-3 text-center">แก้ไข</th></tr>
           </thead>
           <tbody>
             {sorted.map((p, i) => {
-              const winRate = Math.round((p.w / p.played) * 100) || 0;
+              const draws = Math.max(0, p.played - p.w - p.l);
               return (
                 <tr key={p.id} className="border-b border-slate-700/30 hover:bg-slate-900/20">
                   <td className="px-4 py-3 font-bold text-slate-300">{i === 0 ? <Trophy className="w-4 h-4 text-amber-400" /> : i + 1}</td>
                   <td className="px-4 py-3 font-bold text-white flex items-center gap-2"><Avatar player={p} size="w-8 h-8" textSize="text-base" /> {p.name}</td>
                   <td className="px-4 py-3 text-center"><span className={`px-2 py-0.5 rounded text-xs font-bold border-2 ${clsColor(p.cls)}`}>{p.cls}</span></td>
                   <td className="px-4 py-3 text-right font-mono font-bold text-cyan-600">{p.power}</td>
-                  <td className="px-4 py-3 text-center"><span className={winRate >= 50 ? 'text-cyan-600' : 'text-rose-400'}>{winRate}%</span><p className="text-[10px] text-cyan-500">{p.w}W - {p.l}L</p></td>
+                  <td className="px-4 py-3 text-center font-mono"><span className="text-emerald-400">{p.w}</span>/<span className="text-slate-300">{draws}</span>/<span className="text-rose-400">{p.l}</span></td>
                   <td className="px-4 py-3 text-center font-mono text-slate-300">{attendanceCount(p.id)} วัน</td>
                   <td className="px-4 py-3 text-center">
                     <button onClick={() => setEditTarget(p)} className="text-cyan-500 hover:text-cyan-400"><Pencil className="w-4 h-4 inline" /></button>
