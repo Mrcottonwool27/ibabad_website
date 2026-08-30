@@ -1986,7 +1986,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           </button>
         </div>
         {displayCourts.map((court, courtIdx) => {
-          const COURT_TONES = ['bg-slate-900', 'bg-slate-800/80'];
+          const COURT_TONES = ['bg-slate-950', 'bg-slate-700/70'];
           const tone = COURT_TONES[courtIdx % COURT_TONES.length];
           return (
           <div key={court.id} className={`${tone} border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-cyan-500/40 shadow-[0_0_12px_rgba(34,211,238,0.18)]'}`}>
