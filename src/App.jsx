@@ -4,7 +4,7 @@ import {
   Target, Zap, Wallet, Bell, Info, X, Shuffle, Swords,
   ShieldOff, Trophy, TrendingUp, CheckCircle2, AlertCircle,
   MapPin, Clock, Users, Play, Plus, Minus, GripHorizontal,
-  RefreshCw, LayoutGrid, Search, Camera, Settings, Pencil, Trash2, PauseCircle, ChevronUp, ChevronDown
+  RefreshCw, LayoutGrid, Search, Camera, Settings, Pencil, Trash2, PauseCircle, ChevronUp, ChevronDown, Eye, EyeOff
 } from 'lucide-react';
 /* ---------------------------------------------------------
    MASCOT ARTWORK — hand-drawn stickers (user-provided), embedded as data URIs
@@ -220,11 +220,14 @@ function PhotoCropModal({ file, onSave, onClose }) {
             } : { display: 'none' }}
           />
         </div>
-        <div className="flex items-center gap-2 mt-4">
-          <span className="text-xs text-slate-300">ซูม</span>
-          <input type="range" min="1" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="flex-1" />
+        <div className="flex items-center justify-center gap-3 mt-4">
+          <button onClick={() => setZoom(z => Math.max(1, Math.round((z - 0.1) * 100) / 100))}
+            className="w-9 h-9 rounded-full border-2 border-slate-700 text-slate-200 hover:border-cyan-500/50 hover:text-cyan-400 flex items-center justify-center font-bold text-lg">−</button>
+          <span className="text-xs text-slate-300 w-14 text-center font-mono">{Math.round(zoom * 100)}%</span>
+          <button onClick={() => setZoom(z => Math.min(3, Math.round((z + 0.1) * 100) / 100))}
+            className="w-9 h-9 rounded-full border-2 border-slate-700 text-slate-200 hover:border-cyan-500/50 hover:text-cyan-400 flex items-center justify-center font-bold text-lg">+</button>
         </div>
-        <p className="text-[11px] text-slate-300 text-center mt-1">ลากรูปเพื่อขยับตำแหน่ง</p>
+        <p className="text-[11px] text-slate-300 text-center mt-1">ลากรูปเพื่อขยับตำแหน่ง · กด + / − เพื่อซูมเข้า-ออกแบบสัดส่วนเท่ากันทุกด้าน</p>
         <div className="flex gap-2 mt-4">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-lg text-sm font-bold border-2 border-slate-700 text-slate-300 hover:bg-slate-800">ยกเลิก</button>
           <button onClick={handleSave} disabled={!natural} className="flex-1 py-2.5 rounded-lg text-sm font-bold bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 text-white">บันทึกรูป</button>
@@ -431,21 +434,37 @@ function difficultyPenalty(quartet, difficulty) {
   }, 0);
 }
 
-function scoreQuartet(quartet, togetherCounts, todayGroupStats = {}, difficulty = 'all') {
+// โบนัสจากประวัติการจับคู่ทั้งหมดที่ผ่านมา (ไม่ใช่แค่วันนี้) — คู่ไหนเคยเป็นทีมเดียวกันบ่อยและผลออกมาดี (ชนะเยอะ) จะได้คะแนนพิเศษ
+// ยิ่งเจอกันบ่อย (จับคู่กันซ้ำๆ ไม่ว่าจะโดย AI หรือแอดมินจัดเอง) + win rate ตอนเป็นทีมเดียวกันสูง ยิ่งได้โบนัสเยอะ ระบบจะเรียนรู้เพิ่มขึ้นเรื่อยๆ ตามข้อมูลที่สะสม
+function historicalSynergyBonus(quartet, pairStats = {}) {
+  let bonus = 0;
+  for (let i = 0; i < quartet.length; i++) {
+    for (let j = i + 1; j < quartet.length; j++) {
+      const d = pairStats[quartet[i].id]?.mates?.[quartet[j].id];
+      if (d && d.games >= 2) {
+        const winRate = (d.wins + (d.draws || 0) * 0.5) / d.games;
+        bonus += (winRate - 0.5) * 60 + Math.min(d.games, 12) * 5;
+      }
+    }
+  }
+  return bonus;
+}
+
+function scoreQuartet(quartet, togetherCounts, todayGroupStats = {}, difficulty = 'all', pairStats = {}) {
   const powers = quartet.map(p => p.power);
   const spread = Math.max(...powers) - Math.min(...powers);
   let repeatScore = 0;
   for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) repeatScore += togetherCount(togetherCounts, quartet[i].id, quartet[j].id);
   const fairnessPenalty = quartet.reduce((s, p) => s + ((todayGroupStats[p.id]?.totalGames) || 0), 0) * 15;
-  return spread + repeatScore * 250 + fairnessPenalty - tierMixBonus(quartet, todayGroupStats) + difficultyPenalty(quartet, difficulty);
+  return spread + repeatScore * 250 + fairnessPenalty - tierMixBonus(quartet, todayGroupStats) + difficultyPenalty(quartet, difficulty) - historicalSynergyBonus(quartet, pairStats);
 }
 
-function pickBalancedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}, difficulty = 'all') {
+function pickBalancedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}, difficulty = 'all', pairStats = {}) {
   if (waiting.length < 4) return null;
   let best = null, bestScore = Infinity;
   let fallback = null, fallbackScore = Infinity;
   for (const q of combinations(waiting, 4)) {
-    const s = scoreQuartet(q, togetherCounts, todayGroupStats, difficulty);
+    const s = scoreQuartet(q, togetherCounts, todayGroupStats, difficulty, pairStats);
     if (s < fallbackScore) { fallbackScore = s; fallback = q; }
     if (!isValidForLukpat(q, todayLukpatLowerGames)) continue;
     if (violatesConsecutiveLimit(q, consecutiveCounts)) continue;
@@ -454,8 +473,8 @@ function pickBalancedQuartet(waiting, togetherCounts = {}, todayGroupStats = {},
   return best || fallback;
 }
 
-// คู่ผสม: ต้องได้ชาย 2 + หญิง 2 — ให้คะแนนแบบเดียวกัน (บาลานซ์ + เลี่ยงเจอซ้ำ + เป้าหมายความหลากหลายมือ + fairness)
-function pickBalancedMixedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}, difficulty = 'all') {
+// คู่ผสม: ต้องได้ชาย 2 + หญิง 2 — ให้คะแนนแบบเดียวกัน (บาลานซ์ + เลี่ยงเจอซ้ำ + เป้าหมายความหลากหลายมือ + fairness + ประวัติจับคู่)
+function pickBalancedMixedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}, difficulty = 'all', pairStats = {}) {
   const men = waiting.filter(p => p.gender === 'M');
   const women = waiting.filter(p => p.gender === 'F');
   if (men.length < 2 || women.length < 2) return null;
@@ -464,7 +483,7 @@ function pickBalancedMixedQuartet(waiting, togetherCounts = {}, todayGroupStats 
   for (const mPair of combinations(men, 2)) {
     for (const wPair of combinations(women, 2)) {
       const q = [...mPair, ...wPair];
-      const s = scoreQuartet(q, togetherCounts, todayGroupStats, difficulty);
+      const s = scoreQuartet(q, togetherCounts, todayGroupStats, difficulty, pairStats);
       if (s < fallbackScore) { fallbackScore = s; fallback = q; }
       if (!isValidForLukpat(q, todayLukpatLowerGames)) continue;
       if (violatesConsecutiveLimit(q, consecutiveCounts)) continue;
@@ -499,11 +518,11 @@ function pickCrossTierQuartet(waiting, togetherCounts = {}, todayGroupStats = {}
 // matchType: 'open' | 'men' | 'women' | 'mixed' | difficulty: 'all' | 'light' | 'medium' | 'heavy' | 'lightMedium' | 'mediumHeavy'
 // ประเภทคู่ (matchType) เป็นข้อบังคับเสมอ (ต้องได้ครบตามโครงสร้าง เช่น คู่ผสมต้องชาย2หญิง2)
 // ส่วนระดับมือ (difficulty) เป็นสิ่งที่พยายามเคารพให้มากที่สุดผ่านคะแนน ไม่ใช่ตัวกรองเด็ดขาด — กันปัญหาที่คนตรงมือ+เพศพร้อมกันไม่พอ แล้วระบบเลยเมินมือไปเลยทั้งกระดาน
-function pickQuartetByType(waiting, matchType, difficulty = 'all', togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}) {
-  if (matchType === 'men') return pickBalancedQuartet(waiting.filter(p => p.gender === 'M'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
-  if (matchType === 'women') return pickBalancedQuartet(waiting.filter(p => p.gender === 'F'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
-  if (matchType === 'mixed') return pickBalancedMixedQuartet(waiting, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
-  return pickBalancedQuartet(waiting, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
+function pickQuartetByType(waiting, matchType, difficulty = 'all', togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}, pairStats = {}) {
+  if (matchType === 'men') return pickBalancedQuartet(waiting.filter(p => p.gender === 'M'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty, pairStats);
+  if (matchType === 'women') return pickBalancedQuartet(waiting.filter(p => p.gender === 'F'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty, pairStats);
+  if (matchType === 'mixed') return pickBalancedMixedQuartet(waiting, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty, pairStats);
+  return pickBalancedQuartet(waiting, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty, pairStats);
 }
 
 // Splits a quartet into red/blue teams: balances power (with synergy history as a bonus),
@@ -579,7 +598,7 @@ function fillRemainingSlots(court, waiting, matchType, difficulty, togetherCount
       let repeatScore = 0;
       for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) repeatScore += togetherCount(togetherCounts, players4[i].id, players4[j].id);
       const fairness = combo.reduce((s, p) => s + ((todayGroupStats[p.id]?.totalGames) || 0), 0) * 15;
-      const score = Math.abs(effA - effB) + repeatScore * 250 + fairness - tierMixBonus(players4, todayGroupStats) + difficultyPenalty(combo, difficulty);
+      const score = Math.abs(effA - effB) + repeatScore * 250 + fairness - tierMixBonus(players4, todayGroupStats) + difficultyPenalty(combo, difficulty) - historicalSynergyBonus(players4, pairStats);
 
       if (!blocked && score < fallbackScore) { fallbackScore = score; fallback = players4; } // fallback ยังเคารพกฎบล็อกเป็นทีมเดียวกันเสมอ (ข้อนี้สำคัญ ไม่ผ่อนปรน)
       if (!blocked && validHard && score < bestScore) { bestScore = score; best = players4; }
@@ -1787,6 +1806,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   const draggedRef = useRef(null); // เก็บสิ่งที่กำลังลากไว้แบบ ref (ไม่ใช้ state) ให้ทำงานได้ทั้งเมาส์และนิ้วบนจอสัมผัส
   const [pickerTarget, setPickerTarget] = useState(null); // { courtId, slotIndex } | null
   const [editingCourtNameId, setEditingCourtNameId] = useState(null);
+  const [showTierInfo, setShowTierInfo] = useState(true); // ปุ่มตาข้างเพิ่มสนาม สลับซ่อน/โชว์ป้ายมือทั้งหน้า
   const [courtNameDraft, setCourtNameDraft] = useState('');
 
   const placedIds = new Set(courts.flatMap(c => c.players.filter(Boolean).map(p => p.id)));
@@ -1907,7 +1927,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
       slots = fillRemainingSlots(baseCourt, waitingForAI, matchType, difficulty, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, pairStats);
       if (!slots) return;
     } else {
-      const quartet = pickQuartetByType(waitingForAI, matchType, difficulty, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
+      const quartet = pickQuartetByType(waitingForAI, matchType, difficulty, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, pairStats);
       if (!quartet) return;
       slots = quartetToSlots(quartet, pairStats, matchType, togetherCounts);
     }
@@ -1980,7 +2000,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     <>
     <div className="space-y-6">
       <div className="space-y-4">
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <button onClick={() => setShowTierInfo(v => !v)} title={showTierInfo ? 'ซ่อนป้ายมือ' : 'แสดงป้ายมือ'}
+            className="bg-slate-900 border-2 border-slate-700/60 text-slate-200 hover:border-cyan-500/50 text-sm font-bold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5">
+            {showTierInfo ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+          </button>
           <button onClick={addCourt} className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5">
             <Plus className="w-4 h-4" /> เพิ่มสนาม
           </button>
@@ -2125,7 +2149,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                             <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
                             {p.isVeteran && <span className="text-xs opacity-70">🪫</span>}
                           </div>
-                          <span className={`text-xs font-bold px-1.5 py-0.5 rounded mt-1 border-2 w-fit ${clsColor(p.cls)}`}>มือ {p.cls}</span>
+                          {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded mt-1 border-2 w-fit ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
                         </div>
                       </div>
                     ) : <span className="text-xs text-slate-300 font-medium">+ วางผู้เล่น</span>}
@@ -2176,7 +2200,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                       {p.isVeteran && <span className="text-xs shrink-0" title="สายเทคนิค/ลดความเร็ว">🪫</span>}
                     </div>
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>
+                      {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
                       {isResting && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">พัก</span>}
                       {!isResting && cooling && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-orange-600/50 text-orange-400" title="AI Auto-Match จะยังไม่เลือกคนนี้จนกว่าจะครบ 5 นาที แต่ใส่เองได้ตลอด">คูลดาวน์ {cooldownMinsLeft} น.</span>}
                     </div>
@@ -2222,9 +2246,10 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                 <div className="min-w-0 flex-1">
                   <p className="font-bold text-sm text-white truncate">{p.name}</p>
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>
+                    {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
                     <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-emerald-600/50 text-emerald-400">กำลังเล่น</span>
                   </div>
+                  <p className="text-xs text-slate-300 mt-1">เล่นแล้ว {todayGroupStats[p.id]?.totalGames || 0} เกม</p>
                 </div>
               </div>
             ))}
@@ -2304,6 +2329,73 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
   const bumpCourtFee = (delta) => setCourtFee(String(Math.max(0, todayPrice.courtFee + delta)));
   const bumpShuttlePrice = (delta) => setShuttlePrice(String(Math.max(0, todayPrice.shuttlePrice + delta)));
 
+  const unpaidDues = dues.filter(d => !paidMap[d.player.id]);
+  const paidDues = dues.filter(d => paidMap[d.player.id]);
+
+  const renderDueCard = (d) => {
+    const paidInfo = paidMap[d.player.id];
+    const isPrompting = payPromptId === d.player.id;
+    return (
+      <div key={d.player.id} className={`p-3 rounded-xl border-2 ${paidInfo ? 'bg-slate-900 border-emerald-600' : 'bg-slate-900 border-rose-600'}`}>
+        <div className="flex items-center gap-3 mb-2">
+          <Avatar player={d.player} size="w-12 h-12" textSize="text-xl" ring="border-2 border-slate-700/60" />
+          <div className="min-w-0 flex-1">
+            <p className="font-bold text-white text-sm flex items-center gap-1.5 flex-wrap">
+              {d.player.name}
+              <button onClick={() => startEditCost(d)} className="text-slate-300 hover:text-cyan-400"><Pencil className="w-3.5 h-3.5" /></button>
+              {d.overridden && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">แก้ไขเอง</span>}
+            </p>
+            <p className="text-xs text-cyan-500 font-mono">{d.games} เกม = ฿{d.total}</p>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-300 font-mono mb-2">฿{d.courtFeePaid} ค่าสนาม + ฿{d.shuttleCost} ค่าลูก ({d.shuttles} ลูก)</p>
+        {paidInfo ? (
+          <button onClick={() => onUnmarkPaid(d.player.id)} className="w-full justify-center px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-400">
+            <CheckCircle2 className="w-4 h-4" /> จ่ายแล้ว ({paidInfo.method === 'cash' ? 'เงินสด' : 'เงินโอน'})
+          </button>
+        ) : (
+          <button onClick={() => setPayPromptId(isPrompting ? null : d.player.id)} className="w-full justify-center px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 bg-rose-500/10 border-rose-500/30 text-rose-400">
+            <AlertCircle className="w-4 h-4" /> รอชำระ
+          </button>
+        )}
+        {isPrompting && !paidInfo && (
+          <div className="mt-3 pt-3 border-t border-slate-700/50 flex items-center gap-2">
+            <button onClick={() => handleMarkPaid(d.player.id, 'cash')} className="flex-1 py-2 rounded-lg text-xs font-bold border-2 border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 flex items-center justify-center gap-1">
+              <Wallet className="w-3.5 h-3.5" /> เงินสด
+            </button>
+            <button onClick={() => handleMarkPaid(d.player.id, 'transfer')} className="flex-1 py-2 rounded-lg text-xs font-bold border-2 border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 flex items-center justify-center gap-1">
+              <RefreshCw className="w-3.5 h-3.5" /> เงินโอน
+            </button>
+            <button onClick={() => setPayPromptId(null)} className="text-slate-300 hover:text-slate-300"><X className="w-4 h-4" /></button>
+          </div>
+        )}
+        {editCostId === d.player.id && (
+          <div className="mt-3 pt-3 border-t border-slate-700/50">
+            <div className="flex items-center gap-3 flex-wrap mb-2">
+              <label className="text-xs text-slate-300">
+                ค่าสนาม (บาท)
+                <input type="text" inputMode="numeric" value={courtFeeDraft}
+                  onChange={(e) => setCourtFeeDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                  className="block mt-0.5 w-20 bg-slate-950 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              </label>
+              <label className="text-xs text-slate-300">
+                ค่าลูกแบด (บาท)
+                <input type="text" inputMode="numeric" value={shuttleCostDraft}
+                  onChange={(e) => setShuttleCostDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                  className="block mt-0.5 w-20 bg-slate-950 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => saveEditCost(d.player.id)} className="text-xs font-bold text-cyan-400 hover:text-cyan-300">บันทึก</button>
+              {d.overridden && <button onClick={() => resetEditCost(d.player.id)} className="text-xs font-bold text-slate-300 hover:text-slate-200">คืนค่าอัตโนมัติทั้งหมด</button>}
+              <button onClick={() => setEditCostId(null)} className="ml-auto text-slate-300 hover:text-slate-300"><X className="w-4 h-4" /></button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl p-6 relative overflow-hidden">
@@ -2357,73 +2449,26 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
           <div className="bg-slate-950 rounded-lg p-3 border-2 border-cyan-700/40 flex justify-between"><span className="text-cyan-400">เงินโอน</span><span className="font-mono text-white">฿{transferCollected}</span></div>
         </div>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-6">
         {dues.length === 0 && <p className="text-sm text-cyan-500 text-center py-6">ยังไม่มีใครลงเล่นวันนี้ — ไปจัดคู่ในหน้าแอดมินก่อนนะคะ</p>}
-        {dues.map(d => {
-          const paidInfo = paidMap[d.player.id];
-          const isPrompting = payPromptId === d.player.id;
-          return (
-            <div key={d.player.id} className={`p-3 rounded-xl border-2 ${paidInfo ? 'bg-slate-900 border-emerald-600' : 'bg-slate-900 border-rose-600'}`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Avatar player={d.player} size="w-10 h-10" textSize="text-xl" ring="border-2 border-slate-700/60" />
-                  <div>
-                    <p className="font-bold text-white text-sm flex items-center gap-1.5">
-                      {d.player.name}
-                      <button onClick={() => startEditCost(d)} className="text-slate-300 hover:text-cyan-400"><Pencil className="w-3.5 h-3.5" /></button>
-                      {d.overridden && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">แก้ไขเอง</span>}
-                    </p>
-                    <p className="text-xs text-cyan-500 font-mono">{d.games} เกม · (฿{d.courtFeePaid} ค่าสนาม + ฿{d.shuttleCost} ค่าลูก {d.shuttles} ลูก) = ฿{d.total}</p>
-                  </div>
-                </div>
-                {paidInfo ? (
-                  <button onClick={() => onUnmarkPaid(d.player.id)} className="px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-400">
-                    <CheckCircle2 className="w-4 h-4" /> จ่ายแล้ว ({paidInfo.method === 'cash' ? 'เงินสด' : 'เงินโอน'})
-                  </button>
-                ) : (
-                  <button onClick={() => setPayPromptId(isPrompting ? null : d.player.id)} className="px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 bg-rose-500/10 border-rose-500/30 text-rose-400">
-                    <AlertCircle className="w-4 h-4" /> รอชำระ
-                  </button>
-                )}
-              </div>
-              {isPrompting && !paidInfo && (
-                <div className="mt-3 pt-3 border-t border-slate-700/50 flex items-center gap-2">
-                  <span className="text-xs text-slate-300">จ่ายด้วย:</span>
-                  <button onClick={() => handleMarkPaid(d.player.id, 'cash')} className="flex-1 py-2 rounded-lg text-xs font-bold border-2 border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 flex items-center justify-center gap-1">
-                    <Wallet className="w-3.5 h-3.5" /> เงินสด
-                  </button>
-                  <button onClick={() => handleMarkPaid(d.player.id, 'transfer')} className="flex-1 py-2 rounded-lg text-xs font-bold border-2 border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 flex items-center justify-center gap-1">
-                    <RefreshCw className="w-3.5 h-3.5" /> เงินโอน
-                  </button>
-                  <button onClick={() => setPayPromptId(null)} className="text-slate-300 hover:text-slate-300"><X className="w-4 h-4" /></button>
-                </div>
-              )}
-              {editCostId === d.player.id && (
-                <div className="mt-3 pt-3 border-t border-slate-700/50">
-                  <div className="flex items-center gap-3 flex-wrap mb-2">
-                    <label className="text-xs text-slate-300">
-                      ค่าสนาม (บาท)
-                      <input type="text" inputMode="numeric" value={courtFeeDraft}
-                        onChange={(e) => setCourtFeeDraft(e.target.value.replace(/[^0-9]/g, ''))}
-                        className="block mt-0.5 w-20 bg-slate-950 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
-                    </label>
-                    <label className="text-xs text-slate-300">
-                      ค่าลูกแบด (บาท)
-                      <input type="text" inputMode="numeric" value={shuttleCostDraft}
-                        onChange={(e) => setShuttleCostDraft(e.target.value.replace(/[^0-9]/g, ''))}
-                        className="block mt-0.5 w-20 bg-slate-950 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
-                    </label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => saveEditCost(d.player.id)} className="text-xs font-bold text-cyan-400 hover:text-cyan-300">บันทึก</button>
-                    {d.overridden && <button onClick={() => resetEditCost(d.player.id)} className="text-xs font-bold text-slate-300 hover:text-slate-200">คืนค่าอัตโนมัติทั้งหมด</button>}
-                    <button onClick={() => setEditCostId(null)} className="ml-auto text-slate-300 hover:text-slate-300"><X className="w-4 h-4" /></button>
-                  </div>
-                </div>
-              )}
+
+        {unpaidDues.length > 0 && (
+          <div>
+            <h3 className="text-sm font-bold text-rose-400 mb-2 flex items-center gap-2"><span className="w-2 h-4 bg-rose-500 rounded-sm" /> ยังไม่จ่าย ({unpaidDues.length})</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {unpaidDues.map(renderDueCard)}
             </div>
-          );
-        })}
+          </div>
+        )}
+
+        {paidDues.length > 0 && (
+          <div>
+            <h3 className="text-sm font-bold text-emerald-400 mb-2 flex items-center gap-2"><span className="w-2 h-4 bg-emerald-500 rounded-sm" /> จ่ายแล้ว ({paidDues.length})</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {paidDues.map(renderDueCard)}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
