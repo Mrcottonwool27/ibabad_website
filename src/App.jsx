@@ -2249,15 +2249,27 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
 /* ---------------------------------------------------------
    FINANCE — auto-tallied per match, with editable pricing
 --------------------------------------------------------- */
-function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid, dailyPrices, onChangeTodayPrice }) {
+function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid, dailyPrices, onChangeTodayPrice, costOverrides = {}, onSetCostOverride }) {
   const [payPromptId, setPayPromptId] = useState(null);
+  const [editCostId, setEditCostId] = useState(null);
+  const [courtFeeDraft, setCourtFeeDraft] = useState('');
+  const [shuttleCostDraft, setShuttleCostDraft] = useState('');
   const [courtFeeInput, setCourtFeeInput] = useState(null); // null = ยังไม่มีการพิมพ์เอง ใช้ค่าจาก todayPrice
   const [shuttlePriceInput, setShuttlePriceInput] = useState(null);
   const todayKey = dayKeyOf(Date.now());
   const todayPrice = priceForDay(dailyPrices, todayKey);
   const todayRecords = matchRecords.filter(r => dayKeyOf(r.timestamp) === todayKey); // หน้าการเงินโชว์แค่ของวันนี้ ขึ้นวันใหม่ตัวเลขจะเริ่มจาก 0 และรายชื่อจะเป็นแค่คนที่เล่นวันนี้เท่านั้น
   const duesRaw = computeDues(todayRecords, dailyPrices);
-  const dues = duesRaw.map(d => ({ ...d, player: players.find(p => p.id === d.id) })).filter(d => d.player);
+  const dues = duesRaw
+    .map(d => ({ ...d, player: players.find(p => p.id === d.id) }))
+    .filter(d => d.player)
+    .map(d => {
+      const ov = costOverrides[d.player.id];
+      if (!ov) return d;
+      const courtFeePaid = ov.courtFee !== undefined ? ov.courtFee : d.courtFeePaid;
+      const shuttleCost = ov.shuttleCost !== undefined ? ov.shuttleCost : d.shuttleCost;
+      return { ...d, courtFeePaid, shuttleCost, total: courtFeePaid + shuttleCost, overridden: true };
+    });
   const totalExpected = dues.reduce((s, d) => s + d.total, 0);
   const collected = dues.filter(d => paidMap[d.player.id]).reduce((s, d) => s + d.total, 0);
   const cashCollected = dues.filter(d => paidMap[d.player.id]?.method === 'cash').reduce((s, d) => s + d.total, 0);
@@ -2267,6 +2279,18 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
   const handleMarkPaid = (id, method) => {
     onMarkPaid(id, method);
     setPayPromptId(null);
+  };
+
+  const startEditCost = (d) => { setEditCostId(d.player.id); setCourtFeeDraft(String(d.courtFeePaid)); setShuttleCostDraft(String(d.shuttleCost)); };
+  const saveEditCost = (playerId) => {
+    onSetCostOverride(playerId, 'courtFee', courtFeeDraft);
+    onSetCostOverride(playerId, 'shuttleCost', shuttleCostDraft);
+    setEditCostId(null);
+  };
+  const resetEditCost = (playerId) => {
+    onSetCostOverride(playerId, 'courtFee', null);
+    onSetCostOverride(playerId, 'shuttleCost', null);
+    setEditCostId(null);
   };
 
   const setCourtFee = (raw) => {
@@ -2344,7 +2368,11 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
                 <div className="flex items-center gap-3">
                   <Avatar player={d.player} size="w-10 h-10" textSize="text-xl" ring="border-2 border-slate-700/60" />
                   <div>
-                    <p className="font-bold text-white text-sm">{d.player.name}</p>
+                    <p className="font-bold text-white text-sm flex items-center gap-1.5">
+                      {d.player.name}
+                      <button onClick={() => startEditCost(d)} className="text-slate-300 hover:text-cyan-400"><Pencil className="w-3.5 h-3.5" /></button>
+                      {d.overridden && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">แก้ไขเอง</span>}
+                    </p>
                     <p className="text-xs text-cyan-500 font-mono">{d.games} เกม · (฿{d.courtFeePaid} ค่าสนาม + ฿{d.shuttleCost} ค่าลูก {d.shuttles} ลูก) = ฿{d.total}</p>
                   </div>
                 </div>
@@ -2368,6 +2396,29 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
                     <RefreshCw className="w-3.5 h-3.5" /> เงินโอน
                   </button>
                   <button onClick={() => setPayPromptId(null)} className="text-slate-300 hover:text-slate-300"><X className="w-4 h-4" /></button>
+                </div>
+              )}
+              {editCostId === d.player.id && (
+                <div className="mt-3 pt-3 border-t border-slate-700/50">
+                  <div className="flex items-center gap-3 flex-wrap mb-2">
+                    <label className="text-xs text-slate-300">
+                      ค่าสนาม (บาท)
+                      <input type="text" inputMode="numeric" value={courtFeeDraft}
+                        onChange={(e) => setCourtFeeDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                        className="block mt-0.5 w-20 bg-slate-950 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                    </label>
+                    <label className="text-xs text-slate-300">
+                      ค่าลูกแบด (บาท)
+                      <input type="text" inputMode="numeric" value={shuttleCostDraft}
+                        onChange={(e) => setShuttleCostDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                        className="block mt-0.5 w-20 bg-slate-950 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => saveEditCost(d.player.id)} className="text-xs font-bold text-cyan-400 hover:text-cyan-300">บันทึก</button>
+                    {d.overridden && <button onClick={() => resetEditCost(d.player.id)} className="text-xs font-bold text-slate-300 hover:text-slate-200">คืนค่าอัตโนมัติทั้งหมด</button>}
+                    <button onClick={() => setEditCostId(null)} className="ml-auto text-slate-300 hover:text-slate-300"><X className="w-4 h-4" /></button>
+                  </div>
                 </div>
               )}
             </div>
@@ -2400,6 +2451,7 @@ export default function IbabadApp() {
   const [restingIds, setRestingIds] = useState([]);
   const [attendance, setAttendance] = useState({}); // { [playerId]: { [dayKey]: true } } — นับเข้าร่วมสูงสุด 1 แต้ม/วัน
   const [dailyPrices, setDailyPrices] = useState({}); // { [dayKey]: { courtFee, shuttlePrice } } — ราคาล็อกตามวัน แก้วันนี้ไม่กระทบวันก่อนหน้า
+  const [costOverrides, setCostOverrides] = useState({}); // { [playerId]: amount } — แก้ยอดที่ต้องจ่ายของวันนี้เป็นกรณีพิเศษ (เช่น ลดราคา/ยกเว้น) เคลียร์ทุกวันใหม่
   const [lastActiveDay, setLastActiveDay] = useState(dayKeyOf(Date.now())); // ใช้เช็คว่าข้ามวันแล้วหรือยัง เพื่อเคลียร์รายชื่อเช็คอิน
 
   const [isSynced, setIsSynced] = useState(false); // โหลดข้อมูลจาก Supabase รอบแรกเสร็จหรือยัง
@@ -2411,7 +2463,7 @@ export default function IbabadApp() {
 
   const collectStateForSync = () => ({
     appPassword, players, courts, matchRecords, paidMap,
-    checkedInIds, restingIds, attendance, dailyPrices, lastActiveDay,
+    checkedInIds, restingIds, attendance, dailyPrices, costOverrides, lastActiveDay,
   });
 
   const applyRemoteState = (data) => {
@@ -2425,6 +2477,7 @@ export default function IbabadApp() {
     if (data.restingIds !== undefined) setRestingIds(data.restingIds);
     if (data.attendance !== undefined) setAttendance(data.attendance);
     if (data.dailyPrices !== undefined) setDailyPrices(data.dailyPrices);
+    if (data.costOverrides !== undefined) setCostOverrides(data.costOverrides);
     if (data.lastActiveDay !== undefined) setLastActiveDay(data.lastActiveDay);
   };
 
@@ -2446,7 +2499,7 @@ export default function IbabadApp() {
         attendance[id] = rest;
       }
     });
-    const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, courts: clearedCourts, attendance, lastActiveDay: today };
+    const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, courts: clearedCourts, attendance, costOverrides: {}, lastActiveDay: today };
     try {
       const { data: upd, error } = await supabase
         .from('app_state')
@@ -2636,6 +2689,26 @@ export default function IbabadApp() {
   const changeTodayPrice = (newPrice) => {
     const today = dayKeyOf(Date.now());
     setDailyPrices(prev => ({ ...prev, [today]: newPrice }));
+  };
+
+  // แก้ยอดที่ต้องจ่ายของผู้เล่นคนใดคนหนึ่งเป็นกรณีพิเศษ (เช่น ลด/ยกเว้นค่าใช้จ่าย) — amount เป็น null หรือค่าว่างจะยกเลิกการแก้ กลับไปใช้ยอดคำนวณอัตโนมัติ
+  // แก้ค่าสนาม/ค่าลูกแบดของผู้เล่นคนใดคนหนึ่งแยกกันได้ (ลด/ยกเว้นอย่างใดอย่างหนึ่ง หรือทั้งคู่) — field: 'courtFee' | 'shuttleCost'
+  // amount เป็น null หรือค่าว่าง = ยกเลิกการแก้เฉพาะช่องนั้น กลับไปใช้ยอดคำนวณอัตโนมัติของช่องนั้น
+  const setCostOverride = (playerId, field, amount) => {
+    setCostOverrides(prev => {
+      const current = { ...(prev[playerId] || {}) };
+      if (amount === null || amount === '') {
+        delete current[field];
+      } else {
+        current[field] = Math.max(0, Number(amount) || 0);
+      }
+      if (Object.keys(current).length === 0) {
+        const rest = { ...prev };
+        delete rest[playerId];
+        return rest;
+      }
+      return { ...prev, [playerId]: current };
+    });
   };
 
   const handleGameEnd = (court, winner) => {
@@ -2868,7 +2941,7 @@ export default function IbabadApp() {
           {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} onManualDayReset={manualDayReset} />}
           {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} matchRecords={matchRecords} />}
           {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} onEditPlayer={editPlayer} />}
-          {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} />}
+          {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} costOverrides={costOverrides} onSetCostOverride={setCostOverride} />}
           {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} onDeleteMatch={deleteMatchRecord} />}
         </div>
       </main>
