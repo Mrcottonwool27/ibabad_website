@@ -419,21 +419,33 @@ function tierMixBonus(quartet, todayGroupStats) {
 
 // คะแนนยิ่งต่ำยิ่งดี: บาลานซ์พลัง + เลี่ยงคนที่เจอกันซ้ำวันนี้ (น้ำหนักสูงสุด) + โบนัสตามเป้าหมายความหลากหลายมือ
 // + เอนเอียงไปทางคนที่วันนี้เล่นน้อยกว่า (fairness) เพื่อพยายามให้ทุกคนได้เล่นใกล้เคียงกันในแต่ละวัน
-function scoreQuartet(quartet, togetherCounts, todayGroupStats = {}) {
+// โทษถ่วงคะแนนถ้าผู้เล่นอยู่นอกช่วงมือที่เลือกไว้ — ใช้แทนการกรองเด็ดขาด เพื่อให้ยังเคารพระดับมือที่เลือกไว้มากที่สุดเท่าที่จะทำได้
+// แต่ถ้าคนในระดับที่เลือกไม่พอจริงๆ ก็ยังจับคู่ได้ (แค่คะแนนแย่กว่า จึงถูกเลือกทีหลังเสมอถ้ามีตัวเลือกที่ตรงกว่า)
+function difficultyPenalty(quartet, difficulty) {
+  const range = DIFFICULTY_RANGES[difficulty];
+  if (!range) return 0;
+  const [lo, hi] = range;
+  return quartet.reduce((sum, p) => {
+    const idx = TIERS.indexOf(p.cls);
+    return sum + (idx >= lo && idx <= hi ? 0 : 400);
+  }, 0);
+}
+
+function scoreQuartet(quartet, togetherCounts, todayGroupStats = {}, difficulty = 'all') {
   const powers = quartet.map(p => p.power);
   const spread = Math.max(...powers) - Math.min(...powers);
   let repeatScore = 0;
   for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) repeatScore += togetherCount(togetherCounts, quartet[i].id, quartet[j].id);
   const fairnessPenalty = quartet.reduce((s, p) => s + ((todayGroupStats[p.id]?.totalGames) || 0), 0) * 15;
-  return spread + repeatScore * 250 + fairnessPenalty - tierMixBonus(quartet, todayGroupStats);
+  return spread + repeatScore * 250 + fairnessPenalty - tierMixBonus(quartet, todayGroupStats) + difficultyPenalty(quartet, difficulty);
 }
 
-function pickBalancedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}) {
+function pickBalancedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}, difficulty = 'all') {
   if (waiting.length < 4) return null;
   let best = null, bestScore = Infinity;
   let fallback = null, fallbackScore = Infinity;
   for (const q of combinations(waiting, 4)) {
-    const s = scoreQuartet(q, togetherCounts, todayGroupStats);
+    const s = scoreQuartet(q, togetherCounts, todayGroupStats, difficulty);
     if (s < fallbackScore) { fallbackScore = s; fallback = q; }
     if (!isValidForLukpat(q, todayLukpatLowerGames)) continue;
     if (violatesConsecutiveLimit(q, consecutiveCounts)) continue;
@@ -443,7 +455,7 @@ function pickBalancedQuartet(waiting, togetherCounts = {}, todayGroupStats = {},
 }
 
 // คู่ผสม: ต้องได้ชาย 2 + หญิง 2 — ให้คะแนนแบบเดียวกัน (บาลานซ์ + เลี่ยงเจอซ้ำ + เป้าหมายความหลากหลายมือ + fairness)
-function pickBalancedMixedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}) {
+function pickBalancedMixedQuartet(waiting, togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}, difficulty = 'all') {
   const men = waiting.filter(p => p.gender === 'M');
   const women = waiting.filter(p => p.gender === 'F');
   if (men.length < 2 || women.length < 2) return null;
@@ -452,7 +464,7 @@ function pickBalancedMixedQuartet(waiting, togetherCounts = {}, todayGroupStats 
   for (const mPair of combinations(men, 2)) {
     for (const wPair of combinations(women, 2)) {
       const q = [...mPair, ...wPair];
-      const s = scoreQuartet(q, togetherCounts, todayGroupStats);
+      const s = scoreQuartet(q, togetherCounts, todayGroupStats, difficulty);
       if (s < fallbackScore) { fallbackScore = s; fallback = q; }
       if (!isValidForLukpat(q, todayLukpatLowerGames)) continue;
       if (violatesConsecutiveLimit(q, consecutiveCounts)) continue;
@@ -485,16 +497,13 @@ function pickCrossTierQuartet(waiting, togetherCounts = {}, todayGroupStats = {}
 }
 
 // matchType: 'open' | 'men' | 'women' | 'mixed' | difficulty: 'all' | 'light' | 'medium' | 'heavy' | 'lightMedium' | 'mediumHeavy'
+// ประเภทคู่ (matchType) เป็นข้อบังคับเสมอ (ต้องได้ครบตามโครงสร้าง เช่น คู่ผสมต้องชาย2หญิง2)
+// ส่วนระดับมือ (difficulty) เป็นสิ่งที่พยายามเคารพให้มากที่สุดผ่านคะแนน ไม่ใช่ตัวกรองเด็ดขาด — กันปัญหาที่คนตรงมือ+เพศพร้อมกันไม่พอ แล้วระบบเลยเมินมือไปเลยทั้งกระดาน
 function pickQuartetByType(waiting, matchType, difficulty = 'all', togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}) {
-  const tryPool = (pool) => {
-    if (matchType === 'men') return pickBalancedQuartet(pool.filter(p => p.gender === 'M'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-    if (matchType === 'women') return pickBalancedQuartet(pool.filter(p => p.gender === 'F'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-    if (matchType === 'mixed') return pickBalancedMixedQuartet(pool, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-    return pickBalancedQuartet(pool, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-  };
-  const filtered = filterByDifficulty(waiting, difficulty);
-  // ถ้าคนในมือที่เลือกไม่พอ ให้ขยายไปทั้งหมดแทนที่จะใช้งานไม่ได้เลย (ยังบาลานซ์พลังเหมือนเดิม แค่ไม่จำกัดช่วงมือ)
-  return tryPool(filtered) || tryPool(waiting);
+  if (matchType === 'men') return pickBalancedQuartet(waiting.filter(p => p.gender === 'M'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
+  if (matchType === 'women') return pickBalancedQuartet(waiting.filter(p => p.gender === 'F'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
+  if (matchType === 'mixed') return pickBalancedMixedQuartet(waiting, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
+  return pickBalancedQuartet(waiting, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, difficulty);
 }
 
 // Splits a quartet into red/blue teams: balances power (with synergy history as a bonus),
@@ -538,16 +547,10 @@ function fillRemainingSlots(court, waiting, matchType, difficulty, togetherCount
   const emptyIdx = court.players.map((p, i) => (p ? null : i)).filter(i => i !== null);
   if (emptyIdx.length === 0 || emptyIdx.length === 4) return null; // ไม่มีอะไรให้เติม หรือว่างหมด (ใช้เส้นทางปกติ)
 
-  let pool = filterByDifficulty(waiting, difficulty);
+  let pool = waiting;
   if (matchType === 'men') pool = pool.filter(p => p.gender === 'M');
   if (matchType === 'women') pool = pool.filter(p => p.gender === 'F');
-  if (pool.length < emptyIdx.length) {
-    // คนในมือที่เลือกไม่พอเติมช่องที่เหลือ ขยายไปทั้งหมดแทน (improvise) ดีกว่าใช้งานไม่ได้เลย
-    pool = waiting;
-    if (matchType === 'men') pool = pool.filter(p => p.gender === 'M');
-    if (matchType === 'women') pool = pool.filter(p => p.gender === 'F');
-    if (pool.length < emptyIdx.length) return null; // คนไม่พอจริงๆ ต่อให้ไม่กรองมือแล้วก็ยังทำไม่ได้
-  }
+  if (pool.length < emptyIdx.length) return null; // คนไม่พอจริงๆ (นับรวมทุกมือแล้ว)
 
   const fixedPlayers = filled.map(f => f.p);
   const mateBonus = (a, b) => {
@@ -557,10 +560,10 @@ function fillRemainingSlots(court, waiting, matchType, difficulty, togetherCount
   const isBlockedTeammate = (a, b) => a.blocked.includes(b.id) || b.blocked.includes(a.id);
 
   let best = null, bestScore = Infinity;
+  let fallback = null, fallbackScore = Infinity; // เผื่อทุก combo ชนกฎแข็ง (บล็อก/ลูกปัท/เกมติดกัน) หมด ยังมีตัวเลือกให้ใช้ได้ ดีกว่าใช้งานไม่ได้เลย
   for (const combo of combinations(pool, emptyIdx.length)) {
     const fullQuartet = [...fixedPlayers, ...combo];
-    if (!isValidForLukpat(fullQuartet, todayLukpatLowerGames)) continue;
-    if (violatesConsecutiveLimit(fullQuartet, consecutiveCounts)) continue;
+    const validHard = isValidForLukpat(fullQuartet, todayLukpatLowerGames) && !violatesConsecutiveLimit(fullQuartet, consecutiveCounts);
 
     for (const perm of permutations(combo)) {
       const players4 = [null, null, null, null];
@@ -569,19 +572,20 @@ function fillRemainingSlots(court, waiting, matchType, difficulty, togetherCount
 
       const teamA = [players4[0], players4[1]];
       const teamB = [players4[2], players4[3]];
-      if (isBlockedTeammate(teamA[0], teamA[1]) || isBlockedTeammate(teamB[0], teamB[1])) continue;
+      const blocked = isBlockedTeammate(teamA[0], teamA[1]) || isBlockedTeammate(teamB[0], teamB[1]);
 
       const effA = teamA[0].power + teamA[1].power + mateBonus(teamA[0], teamA[1]);
       const effB = teamB[0].power + teamB[1].power + mateBonus(teamB[0], teamB[1]);
       let repeatScore = 0;
       for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) repeatScore += togetherCount(togetherCounts, players4[i].id, players4[j].id);
       const fairness = combo.reduce((s, p) => s + ((todayGroupStats[p.id]?.totalGames) || 0), 0) * 15;
-      const score = Math.abs(effA - effB) + repeatScore * 250 + fairness - tierMixBonus(players4, todayGroupStats);
+      const score = Math.abs(effA - effB) + repeatScore * 250 + fairness - tierMixBonus(players4, todayGroupStats) + difficultyPenalty(combo, difficulty);
 
-      if (score < bestScore) { bestScore = score; best = players4; }
+      if (!blocked && score < fallbackScore) { fallbackScore = score; fallback = players4; } // fallback ยังเคารพกฎบล็อกเป็นทีมเดียวกันเสมอ (ข้อนี้สำคัญ ไม่ผ่อนปรน)
+      if (!blocked && validHard && score < bestScore) { bestScore = score; best = players4; }
     }
   }
-  return best;
+  return best || fallback;
 }
 
 const TIER_POINT_THRESHOLD = 10; // สะสมแต้มขึ้น/ลงมือ (นับถ่วงน้ำหนักจากเกมพลิกล็อก) ให้ครบเท่านี้ถึงจะขยับมือ — แต้มสะสมถาวร ไม่รีเซ็ตเมื่อแพ้/ชนะสลับกัน
@@ -949,6 +953,7 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
   const [power, setPower] = useState(initial?.power ?? (TIER_BASE_POWER[initial?.cls || 'N'] + 50));
   const [gender, setGender] = useState(initial?.gender || 'M');
   const [photo, setPhoto] = useState(initial?.photo || null);
+  const [notes, setNotes] = useState(initial?.notes || '');
   const [cropFile, setCropFile] = useState(null);
   const [showLightbox, setShowLightbox] = useState(false);
   const fileInputRef = React.useRef(null);
@@ -977,7 +982,7 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    onSubmit({ name: name.trim(), fullName: fullName.trim(), phone: phone.trim(), cls, gender, photo, power });
+    onSubmit({ name: name.trim(), fullName: fullName.trim(), phone: phone.trim(), cls, gender, photo, power, notes: notes.trim() });
   };
 
   return (
@@ -1020,6 +1025,13 @@ function PlayerFormModal({ mode = 'add', initial = null, onSubmit, onClose }) {
             เบอร์โทรศัพท์ (ไม่บังคับ)
             <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0812345678"
               className="mt-1 w-full bg-slate-950 border-2 border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+          </label>
+          <label className="block text-xs text-slate-300">
+            โน้ตผู้เล่น (ไม่บังคับ, จะโชว์ที่การ์ดหน้าแอดมินตอนเช็คอิน)
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value.slice(0, NOTES_MAX_LENGTH))} maxLength={NOTES_MAX_LENGTH} rows={2}
+              placeholder="เช่น เข่าไม่ดี เล่นได้แต่คู่ผสม"
+              className="mt-1 w-full bg-slate-950 border-2 border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 resize-none" />
+            <span className="text-[10px] text-slate-300">{notes.length}/{NOTES_MAX_LENGTH}</span>
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-xs text-slate-300">
@@ -1642,9 +1654,10 @@ function HistoryPage({ matchRecords, players, onEditResult, dailyPrices, onDelet
 /* ---------------------------------------------------------
    LEADERBOARD
 --------------------------------------------------------- */
-function LeaderboardPage({ players, attendance }) {
+function LeaderboardPage({ players, attendance, onEditPlayer }) {
   const [sortBy, setSortBy] = useState('power'); // 'power' | 'cls' | 'winrate' | 'attendance' | 'name'
   const [sortDir, setSortDir] = useState('desc'); // 'desc' | 'asc'
+  const [editTarget, setEditTarget] = useState(null);
 
   const attendanceCount = (id) => Object.keys(attendance[id] || {}).length;
   const winRateOf = (p) => (p.played ? p.w / p.played : 0);
@@ -1687,7 +1700,7 @@ function LeaderboardPage({ players, attendance }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead className="text-xs text-slate-300 uppercase bg-slate-950">
-            <tr><th className="px-4 py-3">#</th><th className="px-4 py-3">ชื่อ</th><th className="px-4 py-3 text-center">มือ</th><th className="px-4 py-3 text-right">พลัง</th><th className="px-4 py-3 text-center">W/L (%)</th><th className="px-4 py-3 text-center">เข้าร่วม</th></tr>
+            <tr><th className="px-4 py-3">#</th><th className="px-4 py-3">ชื่อ</th><th className="px-4 py-3 text-center">มือ</th><th className="px-4 py-3 text-right">พลัง</th><th className="px-4 py-3 text-center">W/L (%)</th><th className="px-4 py-3 text-center">เข้าร่วม</th><th className="px-4 py-3 text-center">แก้ไข</th></tr>
           </thead>
           <tbody>
             {sorted.map((p, i) => {
@@ -1700,12 +1713,23 @@ function LeaderboardPage({ players, attendance }) {
                   <td className="px-4 py-3 text-right font-mono font-bold text-cyan-600">{p.power}</td>
                   <td className="px-4 py-3 text-center"><span className={winRate >= 50 ? 'text-cyan-600' : 'text-rose-400'}>{winRate}%</span><p className="text-[10px] text-cyan-500">{p.w}W - {p.l}L</p></td>
                   <td className="px-4 py-3 text-center font-mono text-slate-300">{attendanceCount(p.id)} วัน</td>
+                  <td className="px-4 py-3 text-center">
+                    <button onClick={() => setEditTarget(p)} className="text-cyan-500 hover:text-cyan-400"><Pencil className="w-4 h-4 inline" /></button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+      {editTarget && (
+        <PlayerFormModal
+          mode="edit"
+          initial={editTarget}
+          onSubmit={(data) => { onEditPlayer(editTarget.id, data); setEditTarget(null); }}
+          onClose={() => setEditTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1716,7 +1740,7 @@ function LeaderboardPage({ players, attendance }) {
 /* ---------------------------------------------------------
    SLOT PICKER — manual player assignment for one court slot
 --------------------------------------------------------- */
-function SlotPickerModal({ waiting, currentPlayer, onSelect, onClear, onClose }) {
+function SlotPickerModal({ waiting, playingPlayers, currentPlayer, onSelect, onClear, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl max-w-sm w-full p-5 relative max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -1729,7 +1753,7 @@ function SlotPickerModal({ waiting, currentPlayer, onSelect, onClear, onClose })
           </button>
         )}
         <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
-          {waiting.length === 0 && <p className="text-sm text-slate-300 text-center py-6">ไม่มีคนรอลงเกม</p>}
+          {waiting.length === 0 && (!playingPlayers || playingPlayers.length === 0) && <p className="text-sm text-slate-300 text-center py-6">ไม่มีคนรอลงเกม</p>}
           {waiting.map(p => (
             <button key={p.id} onClick={() => onSelect(p)}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm border-2 border-slate-700/60 bg-slate-950 text-slate-200 hover:border-cyan-500/50 hover:bg-slate-900 transition-colors">
@@ -1739,6 +1763,21 @@ function SlotPickerModal({ waiting, currentPlayer, onSelect, onClear, onClose })
             </button>
           ))}
         </div>
+        {playingPlayers && playingPlayers.length > 0 && (
+          <>
+            <p className="text-xs font-bold text-emerald-400 mt-4 mb-1.5">กำลังเล่นอยู่ (จองคิวสนามนี้ล่วงหน้าได้ ไม่กระทบเกมที่กำลังเล่น)</p>
+            <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+              {playingPlayers.map(p => (
+                <button key={p.id} onClick={() => onSelect(p)}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm border-2 border-emerald-700/40 bg-emerald-950/20 text-slate-200 hover:border-emerald-500/60 transition-colors">
+                  <Avatar player={p} size="w-7 h-7" textSize="text-sm" /> {p.name}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>
+                  <span className="ml-auto text-xs font-bold px-1.5 py-0.5 rounded border-2 border-emerald-600/50 text-emerald-400">กำลังเล่น</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1939,8 +1978,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
             <Plus className="w-4 h-4" /> เพิ่มสนาม
           </button>
         </div>
-        {displayCourts.map((court, courtIdx) => (
-          <div key={court.id} className={`bg-slate-900 border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-700/60'}`}>
+        {displayCourts.map((court, courtIdx) => {
+          const COURT_TONES = ['bg-slate-900', 'bg-slate-800/70', 'bg-indigo-950/30', 'bg-cyan-950/20', 'bg-slate-900/60'];
+          const tone = COURT_TONES[courtIdx % COURT_TONES.length];
+          return (
+          <div key={court.id} className={`${tone} border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-700/60'}`}>
             <div className="flex flex-wrap justify-between items-center mb-4 gap-3">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-black text-cyan-500 bg-cyan-950/40 border-2 border-cyan-700/40 px-2 py-1 rounded-lg shrink-0">เกมที่ {courtIdx + 1}</span>
@@ -1977,7 +2019,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                   </button>
                 )}
               </div>
-              <div className="flex items-center gap-2 mr-2 sm:mr-4">
+              <div className="flex items-center gap-2 mr-6 sm:mr-16">
                 <div className="flex items-center gap-1.5 bg-slate-950 px-3 py-1.5 rounded-lg border-2 border-slate-700/50">
                   <span className="text-xs text-slate-300 mr-1">ลูกแบด:</span>
                   <button onClick={() => removeShuttle(court.id)} disabled={court.shuttlecocks === 0}
@@ -2019,9 +2061,16 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                     </button>
                   </>
                 ) : court.status === 'ready' ? (
-                  <button onClick={() => startGame(court.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1">
-                    <Play className="w-4 h-4 fill-current" /> เริ่มเกม
-                  </button>
+                  (() => {
+                    const blockedByActiveMatch = court.players.some(p => p && playingIds.has(p.id));
+                    return (
+                      <button onClick={() => !blockedByActiveMatch && startGame(court.id)} disabled={blockedByActiveMatch}
+                        title={blockedByActiveMatch ? 'มีคนในสนามนี้กำลังเล่นอยู่สนามอื่น รอให้จบก่อน' : ''}
+                        className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-950 disabled:text-slate-300 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1">
+                        <Play className="w-4 h-4 fill-current" /> {blockedByActiveMatch ? 'รอเกมก่อนหน้าจบ' : 'เริ่มเกม'}
+                      </button>
+                    );
+                  })()
                 ) : (
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-[10px] text-slate-300 hidden sm:inline">ผลเกม?</span>
@@ -2082,7 +2131,8 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
               <span className={TEAM.B.text}>■ {TEAM.B.name}</span>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <div
@@ -2169,6 +2219,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     {pickerTarget && (
       <SlotPickerModal
         waiting={waiting}
+        playingPlayers={playingPlayers}
         currentPlayer={pickerCurrentPlayer}
         onSelect={assignSlotManually}
         onClear={clearSlotManually}
@@ -2683,12 +2734,12 @@ export default function IbabadApp() {
     });
   };
 
-  const editPlayer = (id, { name, fullName, phone, cls, gender, photo, power }) => {
+  const editPlayer = (id, { name, fullName, phone, cls, gender, photo, power, notes }) => {
     setPlayers(prev => prev.map(p => {
       if (p.id !== id) return p;
       const changed = cls !== p.cls || power !== p.power;
       return {
-        ...p, name, fullName, phone, cls, gender, photo, power,
+        ...p, name, fullName, phone, cls, gender, photo, power, notes,
         // แก้มือหรือพลังรบเองแบบ manual ถือเป็นจุดตั้งต้นใหม่ รีเซ็ตแต้มสะสมเลื่อนขั้น ถ้าไม่ได้แก้ทั้งคู่ก็คงเดิม
         tierPoints: changed ? 0 : (p.tierPoints || 0),
       };
@@ -2800,7 +2851,7 @@ export default function IbabadApp() {
         <div className="p-4 md:p-8 max-w-6xl mx-auto">
           {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} onManualDayReset={manualDayReset} />}
           {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} matchRecords={matchRecords} />}
-          {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} />}
+          {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} onEditPlayer={editPlayer} />}
           {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} />}
           {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} onDeleteMatch={deleteMatchRecord} />}
         </div>
