@@ -1841,7 +1841,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     const dragged = draggedRef.current;
     if (!dragged) return;
     setCourts(prev => {
-      const next = prev.map(c => ({ ...c, players: [...c.players] }));
+      const next = prev.map(c => ({ ...c, players: [...c.players], autoSlots: c.autoSlots ? [...c.autoSlots] : [false, false, false, false] }));
       const target = next.find(c => c.id === courtId);
       if (target.status === 'playing') return prev;
       const existing = target.players[slotIndex];
@@ -1854,6 +1854,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
         source.players[dragged.slotIndex] = existing || null;
         target.players[slotIndex] = dragged.player;
       }
+      target.autoSlots[slotIndex] = false; // ลากวางเอง ถือเป็นคนที่วางเอง ไม่ใช่ AI เลือกให้ (กันไม่ให้ปุ่ม "รีแมตช์ AI" ไปยุ่งกับคนนี้)
       return next.map(recomputeStatus);
     });
     draggedRef.current = null;
@@ -1890,23 +1891,28 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     window.addEventListener('pointerup', handleUp);
   };
 
-  const autoMatch = (courtId) => {
+  // isRematch = true: เคลียร์เฉพาะช่องที่ AI เลือกไว้เดิม (autoSlots) แล้วให้ AI สุ่มใหม่เฉพาะช่องนั้น คนที่วางเองจะไม่ถูกแตะ
+  const autoMatch = (courtId, isRematch = false) => {
     const court = courts.find(c => c.id === courtId);
     const matchType = court?.matchType || 'open';
     const difficulty = court?.difficulty || 'all';
-    const filledCount = court.players.filter(Boolean).length;
+    const baseCourt = isRematch
+      ? { ...court, players: court.players.map((p, i) => (court.autoSlots?.[i] ? null : p)) }
+      : court;
+    const filledCount = baseCourt.players.filter(Boolean).length;
 
     let slots;
     if (filledCount > 0) {
       // มีคนวางไว้เองบางช่องแล้ว — เติมเฉพาะช่องที่เหลือจากคิวรอ (ไม่รวมคนพัก) คงคนที่วางไว้แล้วไว้ตามเดิม
-      slots = fillRemainingSlots(court, waitingForAI, matchType, difficulty, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, pairStats);
+      slots = fillRemainingSlots(baseCourt, waitingForAI, matchType, difficulty, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, pairStats);
       if (!slots) return;
     } else {
       const quartet = pickQuartetByType(waitingForAI, matchType, difficulty, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
       if (!quartet) return;
       slots = quartetToSlots(quartet, pairStats, matchType, togetherCounts);
     }
-    setCourts(prev => prev.map(c => c.id === courtId ? { ...c, players: slots, status: 'ready' } : c));
+    const autoSlots = baseCourt.players.map(p => !p); // ช่องที่ตอนนี้ว่าง (ก่อนเติม) = AI เป็นคนเลือกให้ ช่องที่มีคนอยู่แล้ว = วางเอง
+    setCourts(prev => prev.map(c => c.id === courtId ? { ...c, players: slots, autoSlots, status: 'ready' } : c));
   };
 
   const setMatchType = (courtId, matchType) => setCourts(prev => prev.map(c => c.id === courtId ? { ...c, matchType } : c));
@@ -1942,9 +1948,10 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   const assignSlotManually = (player) => {
     if (!pickerTarget) return;
     setCourts(prev => {
-      const next = prev.map(c => ({ ...c, players: [...c.players] }));
+      const next = prev.map(c => ({ ...c, players: [...c.players], autoSlots: c.autoSlots ? [...c.autoSlots] : [false, false, false, false] }));
       const target = next.find(c => c.id === pickerTarget.courtId);
       target.players[pickerTarget.slotIndex] = player;
+      target.autoSlots[pickerTarget.slotIndex] = false; // เลือกเอง ไม่ใช่ AI
       return next.map(recomputeStatus);
     });
     setPickerTarget(null);
@@ -1979,7 +1986,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           </button>
         </div>
         {displayCourts.map((court, courtIdx) => {
-          const COURT_TONES = ['bg-slate-900', 'bg-slate-800/70', 'bg-indigo-950/30', 'bg-cyan-950/20', 'bg-slate-900/60'];
+          const COURT_TONES = ['bg-slate-900', 'bg-indigo-950/40', 'bg-purple-950/30', 'bg-teal-950/30', 'bg-cyan-950/25', 'bg-rose-950/20', 'bg-amber-950/20', 'bg-emerald-950/20'];
           const tone = COURT_TONES[courtIdx % COURT_TONES.length];
           return (
           <div key={court.id} className={`${tone} border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-cyan-500/40 shadow-[0_0_12px_rgba(34,211,238,0.18)]'}`}>
@@ -2063,12 +2070,21 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                 ) : court.status === 'ready' ? (
                   (() => {
                     const blockedByActiveMatch = court.players.some(p => p && playingIds.has(p.id));
+                    const hasAutoSlots = court.autoSlots?.some(Boolean);
                     return (
-                      <button onClick={() => !blockedByActiveMatch && startGame(court.id)} disabled={blockedByActiveMatch}
-                        title={blockedByActiveMatch ? 'มีคนในสนามนี้กำลังเล่นอยู่สนามอื่น รอให้จบก่อน' : ''}
-                        className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-950 disabled:text-slate-300 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1">
-                        <Play className="w-4 h-4 fill-current" /> {blockedByActiveMatch ? 'รอเกมก่อนหน้าจบ' : 'เริ่มเกม'}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        {hasAutoSlots && (
+                          <button onClick={() => autoMatch(court.id, true)} title="สุ่มใหม่เฉพาะคนที่ AI เลือกให้ (คนที่วางเองจะไม่ถูกแตะ)"
+                            className="bg-slate-950 border-2 border-cyan-600/50 text-cyan-400 hover:bg-cyan-950/40 text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1">
+                            <Zap className="w-3.5 h-3.5" /> รีแมตช์ AI
+                          </button>
+                        )}
+                        <button onClick={() => !blockedByActiveMatch && startGame(court.id)} disabled={blockedByActiveMatch}
+                          title={blockedByActiveMatch ? 'มีคนในสนามนี้กำลังเล่นอยู่สนามอื่น รอให้จบก่อน' : ''}
+                          className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-950 disabled:text-slate-300 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1">
+                          <Play className="w-4 h-4 fill-current" /> {blockedByActiveMatch ? 'รอเกมก่อนหน้าจบ' : 'เริ่มเกม'}
+                        </button>
+                      </div>
                     );
                   })()
                 ) : (
