@@ -4,7 +4,7 @@ import {
   Target, Zap, Wallet, Bell, Info, X, Shuffle, Swords,
   ShieldOff, Trophy, TrendingUp, CheckCircle2, AlertCircle,
   MapPin, Clock, Users, Play, Plus, Minus, GripHorizontal,
-  RefreshCw, LayoutGrid, Search, Camera, Settings, Pencil, Trash2, PauseCircle, ChevronUp, ChevronDown, Eye, EyeOff
+  RefreshCw, LayoutGrid, Search, Camera, Settings, Pencil, Trash2, PauseCircle, ChevronUp, ChevronDown, Eye, EyeOff, Hand, Delete
 } from 'lucide-react';
 /* ---------------------------------------------------------
    MASCOT ARTWORK — hand-drawn stickers (user-provided), embedded as data URIs
@@ -1339,6 +1339,53 @@ function DeleteDayConfirmModal({ title, subtitle, description, confirmLabel = '�
 const MASTER_KEY = '110200';
 const DEFAULT_PASSWORD = '123456';
 
+// เครื่องคิดเลขเล็กๆ ใต้เมนู — บวก/ลบง่ายๆ สำหรับคิดเงินคร่าวๆ ระหว่างใช้งาน
+function MiniCalculator() {
+  const [display, setDisplay] = useState('0');
+  const [pending, setPending] = useState(null); // { value, op }
+
+  const inputDigit = (d) => setDisplay(prev => (prev === '0' ? d : prev.length < 12 ? prev + d : prev));
+  const inputDot = () => setDisplay(prev => (prev.includes('.') ? prev : prev + '.'));
+  const chooseOp = (op) => {
+    setPending({ value: parseFloat(display) || 0, op });
+    setDisplay('0');
+  };
+  const equals = () => {
+    if (!pending) return;
+    const a = pending.value, b = parseFloat(display) || 0;
+    const result = pending.op === '+' ? a + b : a - b;
+    setDisplay(String(Math.round(result * 100) / 100));
+    setPending(null);
+  };
+  const clear = () => { setDisplay('0'); setPending(null); };
+  const backspace = () => setDisplay(prev => (prev.length > 1 ? prev.slice(0, -1) : '0'));
+
+  const btnCls = "h-9 rounded-lg text-sm font-bold bg-slate-950 border-2 border-slate-700/60 text-slate-200 hover:border-cyan-500/50 hover:text-cyan-400 flex items-center justify-center";
+  const opCls = "h-9 rounded-lg text-sm font-bold bg-cyan-950/40 border-2 border-cyan-700/40 text-cyan-400 hover:bg-cyan-900/40 flex items-center justify-center";
+
+  return (
+    <div className="mt-4 bg-slate-950 border-2 border-slate-700/60 rounded-xl p-2.5">
+      <p className="text-[11px] font-bold text-slate-300 mb-1.5">เครื่องคิดเลข</p>
+      <div className="bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2.5 py-1.5 mb-1.5 text-right overflow-hidden">
+        {pending && <p className="text-[10px] text-slate-300 font-mono truncate">{pending.value} {pending.op}</p>}
+        <p className="text-lg font-mono font-bold text-white truncate">{display}</p>
+      </div>
+      <div className="grid grid-cols-4 gap-1">
+        <button onClick={clear} className={`${btnCls} col-span-2 text-rose-400`}>C</button>
+        <button onClick={backspace} className={btnCls}><Delete className="w-4 h-4" /></button>
+        <button onClick={() => chooseOp('-')} className={opCls}>−</button>
+        {['7', '8', '9'].map(d => <button key={d} onClick={() => inputDigit(d)} className={btnCls}>{d}</button>)}
+        <button onClick={() => chooseOp('+')} className={opCls}>+</button>
+        {['4', '5', '6'].map(d => <button key={d} onClick={() => inputDigit(d)} className={btnCls}>{d}</button>)}
+        <button onClick={equals} className={`${opCls} row-span-2`}>=</button>
+        {['1', '2', '3'].map(d => <button key={d} onClick={() => inputDigit(d)} className={btnCls}>{d}</button>)}
+        <button onClick={() => inputDigit('0')} className={`${btnCls} col-span-2`}>0</button>
+        <button onClick={inputDot} className={btnCls}>.</button>
+      </div>
+    </div>
+  );
+}
+
 function PasswordGate({ appPassword, onUnlock, onChangePassword }) {
   const [view, setView] = useState('login'); // 'login' | 'change' | 'forgot'
   const [input, setInput] = useState('');
@@ -2137,11 +2184,16 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                     onClick={() => { if (editable && !p) setPickerTarget({ courtId: court.id, slotIndex: index }); }}
                     className={`min-h-[6.5rem] rounded-xl border-2 flex items-center relative px-3 py-2 transition-all ${p ? `${team.border} ${team.bg} border-solid` : 'border-dashed border-slate-700/30 hover:border-cyan-500/50 bg-slate-950/10 justify-center'} ${editable && !p ? 'cursor-pointer' : ''}`}>
                     {p ? (
-                      <div
-                        onPointerDown={(e) => editable && beginPointerDrag(e, () => startDragFromCourt(court.id, index, p))}
-                        className={`flex items-center gap-3 w-full touch-none select-none ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                      >
-                        <GripHorizontal className="w-3 h-3 text-slate-300 absolute top-1 right-1" />
+                      <div className="flex items-center gap-3 w-full">
+                        {editable && (
+                          <button
+                            onPointerDown={(e) => beginPointerDrag(e, () => startDragFromCourt(court.id, index, p))}
+                            title="ลากเพื่อย้าย"
+                            className="absolute top-1 right-1 text-slate-300 hover:text-cyan-400 touch-none cursor-grab active:cursor-grabbing p-0.5"
+                          >
+                            <Hand className="w-4 h-4" />
+                          </button>
+                        )}
                         <Avatar player={p} size="w-16 h-16" textSize="text-3xl" ring="" />
                         <div className="flex flex-col min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
@@ -2189,11 +2241,18 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
             const cooling = isInAICooldown(p.id, matchRecords);
             const cooldownMinsLeft = cooling ? Math.ceil((AI_COOLDOWN_MS - (Date.now() - lastFinishedAt(p.id, matchRecords))) / 60000) : 0;
             return (
-              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))}
-                className={`border-2 p-3 rounded-xl cursor-grab active:cursor-grabbing touch-none select-none group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
+              <div key={p.id}
+                className={`border-2 p-3 rounded-xl relative group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
+                <button
+                  onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))}
+                  title="ลากเพื่อย้าย"
+                  className="absolute top-2 right-2 text-slate-300 hover:text-cyan-400 touch-none cursor-grab active:cursor-grabbing p-1"
+                >
+                  <Hand className="w-5 h-5" />
+                </button>
                 <div className="flex items-center gap-3">
                   <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 pr-6">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <p className="font-bold text-base text-white group-hover:text-cyan-400 truncate max-w-[130px]">{p.name}</p>
                       <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
@@ -2240,10 +2299,16 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {playingPlayers.map(p => (
-              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromPlaying(p))}
-                className="border-2 p-3 rounded-xl flex items-center gap-3 cursor-grab active:cursor-grabbing touch-none select-none bg-emerald-950/20 border-emerald-700/40 hover:border-emerald-500/60">
+              <div key={p.id} className="border-2 p-3 rounded-xl flex items-center gap-3 relative bg-emerald-950/20 border-emerald-700/40 hover:border-emerald-500/60">
+                <button
+                  onPointerDown={(e) => beginPointerDrag(e, () => startDragFromPlaying(p))}
+                  title="ลากเพื่อย้าย"
+                  className="absolute top-2 right-2 text-slate-300 hover:text-emerald-400 touch-none cursor-grab active:cursor-grabbing p-1"
+                >
+                  <Hand className="w-4 h-4" />
+                </button>
                 <Avatar player={p} size="w-12 h-12" textSize="text-xl" />
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 pr-5">
                   <p className="font-bold text-sm text-white truncate">{p.name}</p>
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
@@ -2983,6 +3048,7 @@ export default function IbabadApp() {
             </button>
           ))}
         </nav>
+        <MiniCalculator />
       </aside>
 
       <header className="md:hidden flex items-center justify-between p-4 bg-slate-900 border-b-[3px] border-slate-700 sticky top-0 z-40">
