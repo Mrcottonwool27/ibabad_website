@@ -18,6 +18,7 @@ const MASCOT_GIRL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKEAAAFACAYAA
    TIER / POWER SYSTEM (MMR-style)
 --------------------------------------------------------- */
 const TIERS = ['BG1', 'BG2', 'NB', 'N-', 'N', 'N+', 'S-', 'S', 'P-', 'P', 'C']; // ต่ำ -> สูง
+const NOTES_MAX_LENGTH = 80; // จำกัดความยาวโน้ตผู้เล่น กันการ์ดที่หน้าแอดมินล้น
 const TIER_BASE_POWER = Object.fromEntries(TIERS.map((t, i) => [t, (i + 1) * 100]));
 
 // หามือ (cls) ที่ตรงกับค่าพลังรบ (power) ที่กำหนด — ใช้ตอนแอดมินแก้พลังรบเองแบบ manual แล้วให้มืออัปเดตตาม
@@ -485,11 +486,15 @@ function pickCrossTierQuartet(waiting, togetherCounts = {}, todayGroupStats = {}
 
 // matchType: 'open' | 'men' | 'women' | 'mixed' | difficulty: 'all' | 'light' | 'medium' | 'heavy' | 'lightMedium' | 'mediumHeavy'
 function pickQuartetByType(waiting, matchType, difficulty = 'all', togetherCounts = {}, todayGroupStats = {}, todayLukpatLowerGames = 0, consecutiveCounts = {}) {
-  const pool = filterByDifficulty(waiting, difficulty);
-  if (matchType === 'men') return pickBalancedQuartet(pool.filter(p => p.gender === 'M'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-  if (matchType === 'women') return pickBalancedQuartet(pool.filter(p => p.gender === 'F'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-  if (matchType === 'mixed') return pickBalancedMixedQuartet(pool, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
-  return pickBalancedQuartet(pool, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
+  const tryPool = (pool) => {
+    if (matchType === 'men') return pickBalancedQuartet(pool.filter(p => p.gender === 'M'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
+    if (matchType === 'women') return pickBalancedQuartet(pool.filter(p => p.gender === 'F'), togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
+    if (matchType === 'mixed') return pickBalancedMixedQuartet(pool, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
+    return pickBalancedQuartet(pool, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts);
+  };
+  const filtered = filterByDifficulty(waiting, difficulty);
+  // ถ้าคนในมือที่เลือกไม่พอ ให้ขยายไปทั้งหมดแทนที่จะใช้งานไม่ได้เลย (ยังบาลานซ์พลังเหมือนเดิม แค่ไม่จำกัดช่วงมือ)
+  return tryPool(filtered) || tryPool(waiting);
 }
 
 // Splits a quartet into red/blue teams: balances power (with synergy history as a bonus),
@@ -536,7 +541,13 @@ function fillRemainingSlots(court, waiting, matchType, difficulty, togetherCount
   let pool = filterByDifficulty(waiting, difficulty);
   if (matchType === 'men') pool = pool.filter(p => p.gender === 'M');
   if (matchType === 'women') pool = pool.filter(p => p.gender === 'F');
-  if (pool.length < emptyIdx.length) return null;
+  if (pool.length < emptyIdx.length) {
+    // คนในมือที่เลือกไม่พอเติมช่องที่เหลือ ขยายไปทั้งหมดแทน (improvise) ดีกว่าใช้งานไม่ได้เลย
+    pool = waiting;
+    if (matchType === 'men') pool = pool.filter(p => p.gender === 'M');
+    if (matchType === 'women') pool = pool.filter(p => p.gender === 'F');
+    if (pool.length < emptyIdx.length) return null; // คนไม่พอจริงๆ ต่อให้ไม่กรองมือแล้วก็ยังทำไม่ได้
+  }
 
   const fixedPlayers = filled.map(f => f.p);
   const mateBonus = (a, b) => {
@@ -749,12 +760,13 @@ function computeDues(matchRecords, dailyPrices) {
 /* ---------------------------------------------------------
    PROFILE MODAL
 --------------------------------------------------------- */
-function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, pairStats = {}, matchRecords = [] }) {
+function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, onSetNotes, pairStats = {}, matchRecords = [] }) {
   const fileInputRef = React.useRef(null);
   const [showContact, setShowContact] = useState(false);
   const [cropFile, setCropFile] = useState(null);
   const [showLightbox, setShowLightbox] = useState(false);
-  React.useEffect(() => { setShowContact(false); }, [player?.id]);
+  const [notesDraft, setNotesDraft] = useState(player?.notes || '');
+  React.useEffect(() => { setShowContact(false); setNotesDraft(player?.notes || ''); }, [player?.id]);
   if (!player) return null;
   const winRate = Math.round((player.w / player.played) * 100) || 0;
 
@@ -816,6 +828,24 @@ function ProfileModal({ player, allPlayers, onClose, onToggleBlock, onSetPhoto, 
           </div>
           <h2 className="text-2xl font-black text-white mb-2">{player.name}</h2>
           <span className={`px-2 py-0.5 rounded text-xs font-bold border-2 mb-3 ${clsColor(player.cls)}`}>มือ {player.cls}</span>
+
+          <div className="w-full mb-4 text-left">
+            <label className="text-xs text-slate-300 font-bold">โน้ตผู้เล่น (จะโชว์ที่การ์ดหน้าแอดมินตอนเช็คอิน)</label>
+            <textarea
+              value={notesDraft}
+              onChange={(e) => setNotesDraft(e.target.value.slice(0, NOTES_MAX_LENGTH))}
+              maxLength={NOTES_MAX_LENGTH}
+              rows={2}
+              placeholder="เช่น เข่าไม่ดี เล่นได้แต่คู่ผสม, ขอพักบ่อยๆ"
+              className="mt-1 w-full bg-slate-950 border-2 border-slate-700/60 rounded-lg px-2.5 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 resize-none"
+            />
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-[10px] text-slate-300">{notesDraft.length}/{NOTES_MAX_LENGTH}</span>
+              {notesDraft !== (player.notes || '') && (
+                <button onClick={() => onSetNotes(player.id, notesDraft.trim())} className="text-xs font-bold text-cyan-400 hover:text-cyan-300">บันทึกโน้ต</button>
+              )}
+            </div>
+          </div>
 
           {(player.fullName || player.phone) && (
             showContact ? (
@@ -1723,8 +1753,12 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   const placedIds = new Set(courts.flatMap(c => c.players.filter(Boolean).map(p => p.id)));
   const waiting = players.filter(p => checkedInIds.includes(p.id) && !placedIds.has(p.id) && !paidMap[p.id]);
   const waitingForAI = waiting.filter(p => !restingIds.includes(p.id) && !isInAICooldown(p.id, matchRecords)); // AI Auto-Match ไม่จับคนที่กด "พักก่อน" หรือยังอยู่ในคูลดาวน์ 5 นาทีหลังเล่นจบ
+  // คนที่กำลังเล่นอยู่ตอนนี้ (สนามสถานะ playing) — แยกลิสต์ต่างหาก ยังลากไปวางในสนามอื่นล่วงหน้าได้ แต่ไม่หลุดจากเกมที่เล่นอยู่
+  const playingIds = new Set(courts.filter(c => c.status === 'playing').flatMap(c => c.players.filter(Boolean).map(p => p.id)));
+  const playingPlayers = players.filter(p => playingIds.has(p.id));
 
   const startDragFromWaiting = (player) => { draggedRef.current = { type: 'waiting', player }; };
+  const startDragFromPlaying = (player) => { draggedRef.current = { type: 'playing', player }; };
   const startDragFromCourt = (courtId, slotIndex, player) => { draggedRef.current = { type: 'court', courtId, slotIndex, player }; };
 
   const startEditCourtName = (court) => { setEditingCourtNameId(court.id); setCourtNameDraft(court.name); };
@@ -1772,7 +1806,8 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
       const target = next.find(c => c.id === courtId);
       if (target.status === 'playing') return prev;
       const existing = target.players[slotIndex];
-      if (dragged.type === 'waiting') {
+      if (dragged.type === 'waiting' || dragged.type === 'playing') {
+        // 'playing' = คนที่กำลังเล่นสนามอื่นอยู่ ลากมาจองคิวสนามนี้ล่วงหน้าได้ โดยไม่กระทบเกมที่เขากำลังเล่นอยู่
         target.players[slotIndex] = dragged.player;
       } else {
         const source = next.find(c => c.id === dragged.courtId);
@@ -1838,10 +1873,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   const setMatchType = (courtId, matchType) => setCourts(prev => prev.map(c => c.id === courtId ? { ...c, matchType } : c));
   const setDifficulty = (courtId, difficulty) => setCourts(prev => prev.map(c => c.id === courtId ? { ...c, difficulty } : c));
 
+  // ตอนนี้ระบบ improvise ได้ (ถ้าคนในมือที่เลือกไม่พอ จะขยายไปทั้งหมดแทนอัตโนมัติ) เลยเช็คแค่ว่ามีคนพอโดยรวมไหม ไม่ต้องเช็คแยกตามมือแล้ว
   const canAutoMatch = (matchType, difficulty = 'all', filledCount = 0) => {
     const needed = 4 - filledCount;
     if (needed <= 0) return false;
-    const pool = filterByDifficulty(waitingForAI, difficulty);
+    const pool = waitingForAI;
     const menCount = pool.filter(p => p.gender === 'M').length;
     const womenCount = pool.filter(p => p.gender === 'F').length;
     if (filledCount > 0) return pool.length >= needed; // เติมช่องที่เหลือ ไม่บังคับสัดส่วนเพศเป๊ะเหมือนจัดใหม่ทั้งหมด
@@ -1903,10 +1939,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
             <Plus className="w-4 h-4" /> เพิ่มสนาม
           </button>
         </div>
-        {displayCourts.map(court => (
+        {displayCourts.map((court, courtIdx) => (
           <div key={court.id} className={`bg-slate-900 border-2 rounded-2xl p-4 transition-all ${court.status === 'playing' ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-700/60'}`}>
             <div className="flex flex-wrap justify-between items-center mb-4 gap-3">
               <div className="flex items-center gap-3">
+                <span className="text-xs font-black text-cyan-500 bg-cyan-950/40 border-2 border-cyan-700/40 px-2 py-1 rounded-lg shrink-0">เกมที่ {courtIdx + 1}</span>
                 {editingCourtNameId === court.id ? (
                   <input
                     autoFocus
@@ -1940,7 +1977,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                   </button>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 mr-2 sm:mr-4">
                 <div className="flex items-center gap-1.5 bg-slate-950 px-3 py-1.5 rounded-lg border-2 border-slate-700/50">
                   <span className="text-xs text-slate-300 mr-1">ลูกแบด:</span>
                   <button onClick={() => removeShuttle(court.id)} disabled={court.shuttlecocks === 0}
@@ -2063,21 +2100,23 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
             const cooldownMinsLeft = cooling ? Math.ceil((AI_COOLDOWN_MS - (Date.now() - lastFinishedAt(p.id, matchRecords))) / 60000) : 0;
             return (
               <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))}
-                className={`border-2 p-3 rounded-xl flex items-center gap-3 cursor-grab active:cursor-grabbing touch-none select-none group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
-                <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <p className="font-bold text-base text-white group-hover:text-cyan-400 truncate max-w-[130px]">{p.name}</p>
-                    <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
-                    {p.isVeteran && <span className="text-xs shrink-0" title="สายเทคนิค/ลดความเร็ว">🪫</span>}
+                className={`border-2 p-3 rounded-xl cursor-grab active:cursor-grabbing touch-none select-none group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
+                <div className="flex items-center gap-3">
+                  <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="font-bold text-base text-white group-hover:text-cyan-400 truncate max-w-[130px]">{p.name}</p>
+                      <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
+                      {p.isVeteran && <span className="text-xs shrink-0" title="สายเทคนิค/ลดความเร็ว">🪫</span>}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>
+                      {isResting && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">พัก</span>}
+                      {!isResting && cooling && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-orange-600/50 text-orange-400" title="AI Auto-Match จะยังไม่เลือกคนนี้จนกว่าจะครบ 5 นาที แต่ใส่เองได้ตลอด">คูลดาวน์ {cooldownMinsLeft} น.</span>}
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1">เล่นแล้ว {todayGroupStats[p.id]?.totalGames || 0} เกม</p>
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>
-                    {isResting && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">พัก</span>}
-                    {!isResting && cooling && <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-orange-600/50 text-orange-400" title="AI Auto-Match จะยังไม่เลือกคนนี้จนกว่าจะครบ 5 นาที แต่ใส่เองได้ตลอด">คูลดาวน์ {cooldownMinsLeft} น.</span>}
-                  </div>
-                </div>
-                <div className="flex flex-col items-center gap-2 shrink-0">
+                  <div className="flex flex-col items-center gap-2 shrink-0">
                   <button onClick={() => onOpenProfile(p.id)} className="text-cyan-500 hover:text-cyan-400"><Info className="w-6 h-6" /></button>
                   <button
                     onClick={() => onToggleResting(p.id)}
@@ -2086,7 +2125,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                   >
                     {isResting ? <Play className="w-6 h-6" /> : <PauseCircle className="w-6 h-6" />}
                   </button>
+                  </div>
                 </div>
+                {p.notes && (
+                  <p className="text-xs text-slate-300 mt-2 pt-2 border-t border-slate-700/50 line-clamp-2 break-words">📝 {p.notes}</p>
+                )}
               </div>
             );
           })}
@@ -2098,6 +2141,30 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           </div>
         )}
       </div>
+
+      {playingPlayers.length > 0 && (
+        <div className="bg-slate-900 border-2 border-emerald-700/40 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-4 border-b border-slate-700/50 pb-2">
+            <h2 className="font-bold text-white flex items-center gap-2"><Play className="w-5 h-5 text-emerald-500" /> กำลังเล่นอยู่ (ลากไปจองคิวสนามอื่นล่วงหน้าได้)</h2>
+            <span className="bg-emerald-950/40 text-emerald-400 px-2 py-0.5 rounded text-sm font-bold border-2 border-emerald-600">{playingPlayers.length} คน</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {playingPlayers.map(p => (
+              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromPlaying(p))}
+                className="border-2 p-3 rounded-xl flex items-center gap-3 cursor-grab active:cursor-grabbing touch-none select-none bg-emerald-950/20 border-emerald-700/40 hover:border-emerald-500/60">
+                <Avatar player={p} size="w-12 h-12" textSize="text-xl" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-sm text-white truncate">{p.name}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>
+                    <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-emerald-600/50 text-emerald-400">กำลังเล่น</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
     {pickerTarget && (
       <SlotPickerModal
@@ -2121,13 +2188,14 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
   const [shuttlePriceInput, setShuttlePriceInput] = useState(null);
   const todayKey = dayKeyOf(Date.now());
   const todayPrice = priceForDay(dailyPrices, todayKey);
-  const duesRaw = computeDues(matchRecords, dailyPrices);
+  const todayRecords = matchRecords.filter(r => dayKeyOf(r.timestamp) === todayKey); // หน้าการเงินโชว์แค่ของวันนี้ ขึ้นวันใหม่ตัวเลขจะเริ่มจาก 0 และรายชื่อจะเป็นแค่คนที่เล่นวันนี้เท่านั้น
+  const duesRaw = computeDues(todayRecords, dailyPrices);
   const dues = duesRaw.map(d => ({ ...d, player: players.find(p => p.id === d.id) })).filter(d => d.player);
   const totalExpected = dues.reduce((s, d) => s + d.total, 0);
   const collected = dues.filter(d => paidMap[d.player.id]).reduce((s, d) => s + d.total, 0);
   const cashCollected = dues.filter(d => paidMap[d.player.id]?.method === 'cash').reduce((s, d) => s + d.total, 0);
   const transferCollected = dues.filter(d => paidMap[d.player.id]?.method === 'transfer').reduce((s, d) => s + d.total, 0);
-  const totalShuttles = matchRecords.reduce((s, r) => s + r.shuttlecocks, 0);
+  const totalShuttles = todayRecords.reduce((s, r) => s + r.shuttlecocks, 0);
 
   const handleMarkPaid = (id, method) => {
     onMarkPaid(id, method);
@@ -2183,7 +2251,7 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
-          <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">เกมที่เล่นจบ</span><span className="font-mono text-white">{matchRecords.length} เกม</span></div>
+          <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">เกมที่เล่นจบ</span><span className="font-mono text-white">{todayRecords.length} เกม</span></div>
           <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">ลูกแบดรวม</span><span className="font-mono text-white">{totalShuttles} ลูก</span></div>
         </div>
         <div className="flex items-end gap-2">
@@ -2301,7 +2369,17 @@ export default function IbabadApp() {
     // ขึ้นวันใหม่ (หรือกดรีเซ็ตเอง): เคลียร์รายชื่อเช็คอิน สถานะจ่ายเงิน และล้างผู้เล่นที่ค้างอยู่ในสนามจากเมื่อวาน
     // (ถ้าไม่ล้างสนาม คนที่ยังค้างอยู่ในสนามเก่าจะถูกนับว่า "ลงคอร์ทอยู่แล้ว" ตลอดไป ทำให้ไม่โผล่ใน "รอลงเกม" แม้เช็คอินวันใหม่แล้วก็ตาม)
     const clearedCourts = (rawData.courts || []).map(c => ({ ...c, status: 'waiting', players: [null, null, null, null], shuttlecocks: 1 }));
-    const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, courts: clearedCourts, lastActiveDay: today };
+    // คนที่เช็คอินไว้แต่ยังไม่ได้ลงเล่นเกมไหนเลยของวันนี้ ถือว่าเช็คอินผิด/ยังไม่ได้มาเล่นจริง — ถอนแต้มเข้าร่วมของวันนี้คืน (เหมือนตอนกดยกเลิกเช็คอินทีละคน)
+    const attendance = { ...(rawData.attendance || {}) };
+    (rawData.checkedInIds || []).forEach(id => {
+      const playedToday = (rawData.matchRecords || []).some(r => dayKeyOf(r.timestamp) === today && r.playerIds.includes(id));
+      if (!playedToday && attendance[id]?.[today]) {
+        const rest = { ...attendance[id] };
+        delete rest[today];
+        attendance[id] = rest;
+      }
+    });
+    const rolledOver = { ...rawData, checkedInIds: [], paidMap: {}, courts: clearedCourts, attendance, lastActiveDay: today };
     try {
       const { data: upd, error } = await supabase
         .from('app_state')
@@ -2339,10 +2417,28 @@ export default function IbabadApp() {
         return;
       }
       if (data) {
-        const rolled = await applyDayRolloverIfNeeded(data.data || {});
+        let rolled = await applyDayRolloverIfNeeded(data.data || {});
         if (cancelled) return;
+        // แก้มือให้ตรงกับพลังตามเกณฑ์ปัจจุบัน (ครั้งเดียวตอนโหลด) — เผื่อพลังเก่าค้างมือผิดจากตอนเพิ่มมือ N+ แล้วเกณฑ์เลื่อน
+        const fixedPlayers = (rolled.players || []).map(p => {
+          const correctCls = clsFromPower(p.power);
+          return correctCls !== p.cls ? { ...p, cls: correctCls, tierPoints: 0 } : p;
+        });
+        const clsFixed = fixedPlayers.some((p, i) => p !== rolled.players[i]);
+        if (clsFixed) {
+          rolled = { ...rolled, players: fixedPlayers };
+          try {
+            const { data: upd } = await supabase
+              .from('app_state')
+              .update({ data: rolled, updated_at: new Date().toISOString() })
+              .eq('id', APP_STATE_ROW_ID)
+              .select('updated_at')
+              .single();
+            if (upd) lastKnownUpdatedAt.current = upd.updated_at;
+          } catch { /* บันทึกไม่สำเร็จ ไม่เป็นไร จะแก้ให้ใหม่ทุกครั้งที่โหลดอยู่ดี */ }
+        }
         applyRemoteState(rolled);
-        if (rolled === (data.data || {})) lastKnownUpdatedAt.current = data.updated_at;
+        if (!clsFixed && rolled === (data.data || {})) lastKnownUpdatedAt.current = data.updated_at;
       } else {
         // ยังไม่เคยมีแถวข้อมูล — สร้างแถวแรกด้วยค่าเริ่มต้นของแอป
         const initial = { appPassword: DEFAULT_PASSWORD, players: initialPlayers, courts: [
@@ -2386,16 +2482,42 @@ export default function IbabadApp() {
 
 
   // บันทึกขึ้น Supabase (หน่วงเวลาเล็กน้อยเพื่อไม่ยิงถี่เกินไป) ทุกครั้งที่ข้อมูลในเครื่องนี้เปลี่ยน
+  // ก่อนเขียนจะดึงข้อมูลล่าสุดจากเซิร์ฟเวอร์มาผสาน (merge) กับของเครื่องนี้ก่อนเสมอ แทนที่จะเขียนทับดื้อๆ
+  // กันเหตุการณ์ที่มีสองอุปกรณ์ใช้งานพร้อมกันแล้วอุปกรณ์นึงเขียนทับผลแพ้ชนะ/พลัง/ประวัติของอีกอุปกรณ์หายไป
+  const mergeForWrite = (local, remote) => {
+    if (!remote) return local;
+    // ประวัติแมทช์: รวมของทั้งสองฝั่งด้วย id (กันไม่ให้เกมที่อีกเครื่องเพิ่งบันทึกหายไป)
+    const recMap = new Map();
+    (remote.matchRecords || []).forEach(r => recMap.set(r.id, r));
+    (local.matchRecords || []).forEach(r => recMap.set(r.id, r)); // ของเครื่องนี้ทับได้ถ้า id ซ้ำ (เพิ่งแก้ไข/ลบสด)
+    const matchRecordsMerged = Array.from(recMap.values());
+    // ผู้เล่น: ต่อคน ใครเล่นไปเยอะกว่า (played สูงกว่า) ถือว่ามีประวัติครบกว่า ใช้ฝั่งนั้น กันพลัง/สถิติแพ้ชนะถูกเขียนทับด้วยข้อมูลเก่ากว่า
+    const remoteMap = new Map((remote.players || []).map(p => [p.id, p]));
+    const playersMerged = (local.players || []).map(lp => {
+      const rp = remoteMap.get(lp.id);
+      if (!rp) return lp;
+      return (rp.played || 0) > (lp.played || 0) ? rp : lp;
+    });
+    return { ...local, matchRecords: matchRecordsMerged, players: playersMerged };
+  };
+
   useEffect(() => {
     if (!isSynced) return; // ยังโหลดรอบแรกไม่เสร็จ อย่าเพิ่งเขียนทับด้วยค่า default
     if (isApplyingRemote.current) { isApplyingRemote.current = false; return; } // การเปลี่ยนแปลงรอบนี้มาจากรีโมต ไม่ต้องเขียนกลับ
 
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
+      // ดึงของสดจากเซิร์ฟเวอร์มาก่อนเขียน เพื่อผสานกับของเครื่องนี้ ไม่ใช่เขียนทับดื้อๆ
+      const { data: fresh } = await supabase
+        .from('app_state')
+        .select('data, updated_at')
+        .eq('id', APP_STATE_ROW_ID)
+        .maybeSingle();
+      const merged = mergeForWrite(collectStateForSync(), fresh?.data);
       const nowIso = new Date().toISOString();
       const { data, error } = await supabase
         .from('app_state')
-        .update({ data: collectStateForSync(), updated_at: nowIso })
+        .update({ data: merged, updated_at: nowIso })
         .eq('id', APP_STATE_ROW_ID)
         .select('updated_at')
         .single();
@@ -2403,6 +2525,10 @@ export default function IbabadApp() {
         lastKnownUpdatedAt.current = data.updated_at;
         lastLocalWriteAt.current = Date.now();
         setSyncError(null);
+        // ถ้าผสานแล้วต่างจากของเครื่องนี้ตอนนี้ (เช่น ได้เกม/ผู้เล่นจากอีกเครื่องมาเพิ่ม) อัปเดต state เครื่องนี้ให้ตรงด้วย
+        if (merged.matchRecords.length !== matchRecords.length || merged.players.some((p, i) => p !== players[i])) {
+          applyRemoteState(merged);
+        }
       } else if (error) {
         setSyncError('บันทึกขึ้นฐานข้อมูลไม่สำเร็จ — การเปลี่ยนแปลงล่าสุดอาจยังไม่ถูกบันทึก');
       }
@@ -2536,6 +2662,10 @@ export default function IbabadApp() {
 
   const setPhoto = (playerId, dataUrl) => {
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, photo: dataUrl } : p));
+  };
+
+  const setNotes = (playerId, notes) => {
+    setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, notes } : p));
   };
 
   const addPlayer = ({ name, fullName, phone, cls, gender, photo, power }) => {
@@ -2685,7 +2815,7 @@ export default function IbabadApp() {
         ))}
       </nav>
 
-      <ProfileModal player={profilePlayer} allPlayers={players} onClose={() => setProfileId(null)} onToggleBlock={toggleBlock} onSetPhoto={setPhoto} pairStats={pairStats} matchRecords={matchRecords} />
+      <ProfileModal player={profilePlayer} allPlayers={players} onClose={() => setProfileId(null)} onToggleBlock={toggleBlock} onSetPhoto={setPhoto} onSetNotes={setNotes} pairStats={pairStats} matchRecords={matchRecords} />
     </div>
   );
 }
