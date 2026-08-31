@@ -46,7 +46,7 @@ function filterByDifficulty(list, difficulty) {
 }
 
 const ELO_SCALE = 200;   // ยิ่งมาก ยิ่งให้ผลต่างพลังมีผลน้อยลงต่อ % โอกาสชนะ
-const ELO_K = 20;        // เพดานคะแนนที่ขยับได้ต่อเกม
+const ELO_K = 7;         // เพดานคะแนนที่ขยับได้ต่อเกม (สูงสุด ±7 แต้ม/เกม)
 const MIN_POWER = 50;
 
 const DEFAULT_COURT_FEE = 70;    // บาทต่อคอร์ทต่อเกม
@@ -1141,7 +1141,7 @@ function DeleteConfirmModal({ player, onConfirm, onClose }) {
   );
 }
 
-function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer, attendance, onManualDayReset }) {
+function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer, attendance, onManualDayReset, showTierInfo, onToggleTierInfo }) {
   const [query, setQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -1177,7 +1177,7 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
           <div className="min-w-0">
             <p className="font-bold text-base text-white truncate">{p.name}</p>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-xs font-bold text-cyan-500">มือ {p.cls}</span>
+              {showTierInfo && <span className="text-xs font-bold text-cyan-500">มือ {p.cls}</span>}
               <span className={`text-sm font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
             </div>
           </div>
@@ -1208,6 +1208,10 @@ function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, on
             <span className="w-2 h-5 bg-cyan-600 rounded-sm" /> เช็คอินสมาชิกวันนี้
           </h3>
           <div className="flex items-center gap-2">
+            <button onClick={onToggleTierInfo} title={showTierInfo ? 'ซ่อนป้ายมือ' : 'แสดงป้ายมือ'}
+              className="bg-slate-900 border-2 border-slate-700/60 text-slate-200 hover:border-cyan-500/50 text-sm font-bold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5">
+              {showTierInfo ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+            </button>
             <button onClick={() => { if (window.confirm('รีเซ็ตวันใหม่เลยตอนนี้? จะล้างรายชื่อเช็คอิน สถานะจ่ายเงิน และสนามทั้งหมด (ไม่กระทบพลัง/สถิติ/ประวัติ)')) onManualDayReset(); }}
               title="รีเซ็ตวันใหม่ด้วยตัวเอง (ล้างเช็คอิน/จ่ายเงิน/สนาม)"
               className="text-slate-300 hover:text-rose-400 text-xs font-bold px-3 py-2.5 rounded-lg border-2 border-slate-700/60 flex items-center gap-1.5">
@@ -1720,7 +1724,7 @@ function HistoryPage({ matchRecords, players, onEditResult, dailyPrices, onDelet
 /* ---------------------------------------------------------
    LEADERBOARD
 --------------------------------------------------------- */
-function LeaderboardPage({ players, attendance, onEditPlayer }) {
+function LeaderboardPage({ players, attendance, onEditPlayer, onOpenProfile }) {
   const [sortBy, setSortBy] = useState('power'); // 'power' | 'cls' | 'winrate' | 'attendance' | 'name'
   const [sortDir, setSortDir] = useState('desc'); // 'desc' | 'asc'
   const [editTarget, setEditTarget] = useState(null);
@@ -1780,6 +1784,7 @@ function LeaderboardPage({ players, attendance, onEditPlayer }) {
                   <td className="px-4 py-3 text-center font-mono"><span className="text-emerald-400">{p.w}</span>/<span className="text-slate-300">{draws}</span>/<span className="text-rose-400">{p.l}</span></td>
                   <td className="px-4 py-3 text-center font-mono text-slate-300">{attendanceCount(p.id)} วัน</td>
                   <td className="px-4 py-3 text-center">
+                    <button onClick={() => onOpenProfile(p.id)} className="text-cyan-500 hover:text-cyan-400 mr-2"><Info className="w-4 h-4 inline" /></button>
                     <button onClick={() => setEditTarget(p)} className="text-cyan-500 hover:text-cyan-400"><Pencil className="w-4 h-4 inline" /></button>
                   </td>
                 </tr>
@@ -1849,11 +1854,11 @@ function SlotPickerModal({ waiting, playingPlayers, currentPlayer, onSelect, onC
   );
 }
 
-function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpenProfile, pairStats, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, restingIds, onToggleResting, paidMap, matchRecords }) {
+function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpenProfile, pairStats, togetherCounts, todayGroupStats, todayLukpatLowerGames, consecutiveCounts, restingIds, onToggleResting, paidMap, matchRecords, showTierInfo, onToggleTierInfo }) {
   const draggedRef = useRef(null); // เก็บสิ่งที่กำลังลากไว้แบบ ref (ไม่ใช้ state) ให้ทำงานได้ทั้งเมาส์และนิ้วบนจอสัมผัส
   const [pickerTarget, setPickerTarget] = useState(null); // { courtId, slotIndex } | null
   const [editingCourtNameId, setEditingCourtNameId] = useState(null);
-  const [showTierInfo, setShowTierInfo] = useState(true); // ปุ่มตาข้างเพิ่มสนาม สลับซ่อน/โชว์ป้ายมือทั้งหน้า
+  // showTierInfo/onToggleTierInfo มาจาก App level แล้ว (เชื่อมกับปุ่มตาที่หน้าแรกด้วย)
   const [courtNameDraft, setCourtNameDraft] = useState('');
 
   const placedIds = new Set(courts.flatMap(c => c.players.filter(Boolean).map(p => p.id)));
@@ -2048,7 +2053,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="flex justify-end gap-2">
-          <button onClick={() => setShowTierInfo(v => !v)} title={showTierInfo ? 'ซ่อนป้ายมือ' : 'แสดงป้ายมือ'}
+          <button onClick={onToggleTierInfo} title={showTierInfo ? 'ซ่อนป้ายมือ' : 'แสดงป้ายมือ'}
             className="bg-slate-900 border-2 border-slate-700/60 text-slate-200 hover:border-cyan-500/50 text-sm font-bold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5">
             {showTierInfo ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
           </button>
@@ -2241,18 +2246,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
             const cooling = isInAICooldown(p.id, matchRecords);
             const cooldownMinsLeft = cooling ? Math.ceil((AI_COOLDOWN_MS - (Date.now() - lastFinishedAt(p.id, matchRecords))) / 60000) : 0;
             return (
-              <div key={p.id}
-                className={`border-2 p-3 rounded-xl relative group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
-                <button
-                  onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))}
-                  title="ลากเพื่อย้าย"
-                  className="absolute top-2 right-2 text-slate-300 hover:text-cyan-400 touch-none cursor-grab active:cursor-grabbing p-1"
-                >
-                  <Hand className="w-5 h-5" />
-                </button>
+              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))}
+                className={`border-2 p-3 rounded-xl cursor-grab active:cursor-grabbing touch-none select-none group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
                 <div className="flex items-center gap-3">
                   <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
-                  <div className="min-w-0 flex-1 pr-6">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <p className="font-bold text-base text-white group-hover:text-cyan-400 truncate max-w-[130px]">{p.name}</p>
                       <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
@@ -2299,16 +2297,10 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {playingPlayers.map(p => (
-              <div key={p.id} className="border-2 p-3 rounded-xl flex items-center gap-3 relative bg-emerald-950/20 border-emerald-700/40 hover:border-emerald-500/60">
-                <button
-                  onPointerDown={(e) => beginPointerDrag(e, () => startDragFromPlaying(p))}
-                  title="ลากเพื่อย้าย"
-                  className="absolute top-2 right-2 text-slate-300 hover:text-emerald-400 touch-none cursor-grab active:cursor-grabbing p-1"
-                >
-                  <Hand className="w-4 h-4" />
-                </button>
+              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromPlaying(p))}
+                className="border-2 p-3 rounded-xl flex items-center gap-3 cursor-grab active:cursor-grabbing touch-none select-none bg-emerald-950/20 border-emerald-700/40 hover:border-emerald-500/60">
                 <Avatar player={p} size="w-12 h-12" textSize="text-xl" />
-                <div className="min-w-0 flex-1 pr-5">
+                <div className="min-w-0 flex-1">
                   <p className="font-bold text-sm text-white truncate">{p.name}</p>
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
@@ -2562,6 +2554,8 @@ export default function IbabadApp() {
   const [attendance, setAttendance] = useState({}); // { [playerId]: { [dayKey]: true } } — นับเข้าร่วมสูงสุด 1 แต้ม/วัน
   const [dailyPrices, setDailyPrices] = useState({}); // { [dayKey]: { courtFee, shuttlePrice } } — ราคาล็อกตามวัน แก้วันนี้ไม่กระทบวันก่อนหน้า
   const [costOverrides, setCostOverrides] = useState({}); // { [playerId]: amount } — แก้ยอดที่ต้องจ่ายของวันนี้เป็นกรณีพิเศษ (เช่น ลดราคา/ยกเว้น) เคลียร์ทุกวันใหม่
+  const [showTierInfo, setShowTierInfo] = useState(true); // ปุ่มตา — ซ่อน/โชว์ป้ายมือ เชื่อมกันทั้งหน้าแรกและหน้าแอดมิน
+  const toggleTierInfo = () => setShowTierInfo(v => !v);
   const [lastActiveDay, setLastActiveDay] = useState(dayKeyOf(Date.now())); // ใช้เช็คว่าข้ามวันแล้วหรือยัง เพื่อเคลียร์รายชื่อเช็คอิน
 
   const [isSynced, setIsSynced] = useState(false); // โหลดข้อมูลจาก Supabase รอบแรกเสร็จหรือยัง
@@ -3057,9 +3051,9 @@ export default function IbabadApp() {
 
       <main className="flex-1 pb-24 md:pb-0">
         <div className="p-4 md:p-8 max-w-6xl mx-auto">
-          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} onManualDayReset={manualDayReset} />}
-          {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} matchRecords={matchRecords} />}
-          {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} onEditPlayer={editPlayer} />}
+          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} onManualDayReset={manualDayReset} showTierInfo={showTierInfo} onToggleTierInfo={toggleTierInfo} />}
+          {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} matchRecords={matchRecords} showTierInfo={showTierInfo} onToggleTierInfo={toggleTierInfo} />}
+          {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} onEditPlayer={editPlayer} onOpenProfile={setProfileId} />}
           {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} costOverrides={costOverrides} onSetCostOverride={setCostOverride} />}
           {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} onDeleteMatch={deleteMatchRecord} />}
         </div>
