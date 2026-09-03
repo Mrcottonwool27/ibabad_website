@@ -300,7 +300,9 @@ function tierGroup(cls) {
 }
 
 // สถิติวันนี้ต่อผู้เล่น: เล่นไปกี่เกม, กี่เกมที่ "ข้ามกลุ่ม" (low เจอ non-low หรือ non-low เจอ low)
-function buildTodayGroupStats(matchRecords, players) {
+// นับ "เล่นแล้ว X เกม" ของวันนี้ — นับตั้งแต่กด "เริ่มเกม" เลย ไม่ต้องรอจบเกม
+// (เกมที่กำลังเล่นอยู่ตอนนี้ นับ +1 ไปก่อน พอจบจริงจะกลายเป็น matchRecords แทนที่ ไม่นับซ้ำ / ถ้ายกเลิกหรือลบ ตัวเลขจะลดกลับเองเพราะคำนวณสดทุกครั้ง)
+function buildTodayGroupStats(matchRecords, players, courts = []) {
   const today = dayKeyOf(Date.now());
   const stats = {};
   matchRecords.forEach(r => {
@@ -313,6 +315,12 @@ function buildTodayGroupStats(matchRecords, players) {
       const myGroup = groups[i];
       const hasOtherGroup = groups.some(g => (myGroup === 'low') ? g !== 'low' : g === 'low');
       if (hasOtherGroup) stats[id].crossGames += 1;
+    });
+  });
+  courts.filter(c => c.status === 'playing').forEach(c => {
+    (c.players || []).filter(Boolean).forEach(p => {
+      if (!stats[p.id]) stats[p.id] = { totalGames: 0, crossGames: 0 };
+      stats[p.id].totalGames += 1;
     });
   });
   return stats;
@@ -1867,6 +1875,8 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
   // คนที่กำลังเล่นอยู่ตอนนี้ (สนามสถานะ playing) — แยกลิสต์ต่างหาก ยังลากไปวางในสนามอื่นล่วงหน้าได้ แต่ไม่หลุดจากเกมที่เล่นอยู่
   const playingIds = new Set(courts.filter(c => c.status === 'playing').flatMap(c => c.players.filter(Boolean).map(p => p.id)));
   const playingPlayers = players.filter(p => playingIds.has(p.id));
+  const readyIds = new Set(courts.filter(c => c.status === 'ready').flatMap(c => c.players.filter(Boolean).map(p => p.id)));
+  const readyPlayers = players.filter(p => readyIds.has(p.id));
 
   const startDragFromWaiting = (player) => { draggedRef.current = { type: 'waiting', player }; };
   const startDragFromPlaying = (player) => { draggedRef.current = { type: 'playing', player }; };
@@ -1885,10 +1895,11 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
       const nextNameNum = nameNums.length ? Math.max(...nameNums) + 1 : prev.length + 1;
       const idNums = prev.map(c => parseInt((c.id.match(/\d+/) || ['0'])[0], 10)).filter(n => !isNaN(n));
       const nextIdNum = idNums.length ? Math.max(...idNums) + 1 : prev.length + 1;
-      return [...prev, {
+      // สนามใหม่ขึ้นบนสุด ดันของเดิมลงล่าง — เกมที่ N จะนับตามลำดับนี้ ไม่ใช้การเรียงตามสถานะแล้ว
+      return [{
         id: `c${nextIdNum}`, name: `สนาม ${nextNameNum}`, status: 'waiting',
         players: [null, null, null, null], shuttlecocks: 1, matchType: 'open', difficulty: 'all',
-      }];
+      }, ...prev];
     });
   };
 
@@ -2044,9 +2055,8 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
     ? courts.find(c => c.id === pickerTarget.courtId)?.players[pickerTarget.slotIndex] || null
     : null;
 
-  // สนามที่กำลังเล่น/พร้อมเริ่มอยู่ด้านบน สนามที่จบเกมแล้ว (ว่าง) จะเลื่อนลงล่างให้อัตโนมัติ
-  const courtStatusOrder = { playing: 0, ready: 1, waiting: 2 };
-  const displayCourts = [...courts].sort((a, b) => (courtStatusOrder[a.status] ?? 3) - (courtStatusOrder[b.status] ?? 3));
+  // เกมที่ N นับตามลำดับสนามในลิสต์ตรงๆ (สนามใหม่ขึ้นบนสุด ลบสนามไหนออกเลขที่เหลือจะขยับชิดขึ้นเองอัตโนมัติ ไม่มีช่องว่าง)
+  const displayCourts = courts;
 
   return (
     <>
@@ -2202,12 +2212,12 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                         <Avatar player={p} size="w-16 h-16" textSize="text-3xl" ring="" />
                         <div className="flex flex-col min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-base font-bold text-white truncate max-w-[110px]">{p.name}</span>
-                            <span className={`text-base font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
+                            <span className="text-lg font-bold text-white truncate max-w-[120px]">{p.name}</span>
                             {p.isVeteran && <span className="text-xs opacity-70">🪫</span>}
                           </div>
                           {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded mt-1 border-2 w-fit ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
                         </div>
+                        <span className={`absolute bottom-1.5 right-1.5 text-lg font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
                       </div>
                     ) : <span className="text-xs text-slate-300 font-medium">+ วางผู้เล่น</span>}
                     {editable && (
@@ -2288,6 +2298,30 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           </div>
         )}
       </div>
+
+      {readyPlayers.length > 0 && (
+        <div className="bg-slate-900 border-2 border-cyan-700/40 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-4 border-b border-slate-700/50 pb-2">
+            <h2 className="font-bold text-white flex items-center gap-2"><Users className="w-5 h-5 text-cyan-500" /> รอเริ่มเกม (ลงคอร์ทครบแล้ว รอกด "เริ่มเกม")</h2>
+            <span className="bg-cyan-950/40 text-cyan-400 px-2 py-0.5 rounded text-sm font-bold border-2 border-cyan-600">{readyPlayers.length} คน</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {readyPlayers.map(p => (
+              <div key={p.id} className="border-2 p-3 rounded-xl flex items-center gap-3 bg-cyan-950/20 border-cyan-700/40">
+                <Avatar player={p} size="w-12 h-12" textSize="text-xl" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-sm text-white truncate">{p.name}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
+                    <span className="text-xs font-bold px-1.5 py-0.5 rounded border-2 border-cyan-600/50 text-cyan-400">รอเริ่มเกม</span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-1">เล่นแล้ว {todayGroupStats[p.id]?.totalGames || 0} เกม</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {playingPlayers.length > 0 && (
         <div className="bg-slate-900 border-2 border-emerald-700/40 rounded-2xl p-4">
@@ -2396,16 +2430,16 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
       <div key={d.player.id} className={`p-3 rounded-xl border-2 ${paidInfo ? 'bg-slate-900 border-emerald-600' : 'bg-slate-900 border-rose-600'}`}>
         <div className="flex items-center gap-3 mb-2">
           <Avatar player={d.player} size="w-12 h-12" textSize="text-xl" ring="border-2 border-slate-700/60" />
-          <div className="min-w-0 flex-1">
-            <p className="font-bold text-white text-sm flex items-center gap-1.5 flex-wrap">
-              {d.player.name}
-              <button onClick={() => startEditCost(d)} className="text-slate-300 hover:text-cyan-400"><Pencil className="w-3.5 h-3.5" /></button>
-              {d.overridden && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400">แก้ไขเอง</span>}
+          <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
+            <p className="font-bold text-white text-lg flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className="truncate">{d.player.name}</span>
+              <button onClick={() => startEditCost(d)} className="text-slate-300 hover:text-cyan-400 shrink-0"><Pencil className="w-3.5 h-3.5" /></button>
+              {d.overridden && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border-2 border-amber-600/50 text-amber-400 shrink-0">แก้ไขเอง</span>}
             </p>
-            <p className="text-xs text-cyan-500 font-mono">{d.games} เกม = ฿{d.total}</p>
+            <span className="text-xl font-black text-cyan-400 font-mono shrink-0">฿{d.total}</span>
           </div>
         </div>
-        <p className="text-[11px] text-slate-300 font-mono mb-2">฿{d.courtFeePaid} ค่าสนาม + ฿{d.shuttleCost} ค่าลูก ({d.shuttles} ลูก)</p>
+        <p className="text-[11px] text-slate-300 font-mono mb-2">{d.games} เกม · ฿{d.courtFeePaid} ค่าสนาม + ฿{d.shuttleCost} ค่าลูก ({d.shuttles} ลูก)</p>
         {paidInfo ? (
           <button onClick={() => onUnmarkPaid(d.player.id)} className="w-full justify-center px-3 py-1.5 rounded-lg text-xs font-bold border-2 flex items-center gap-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-400">
             <CheckCircle2 className="w-4 h-4" /> จ่ายแล้ว ({paidInfo.method === 'cash' ? 'เงินสด' : 'เงินโอน'})
@@ -2460,36 +2494,6 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
         <h2 className="text-xl font-black text-white mb-1">สรุปค่าใช้จ่ายวันนี้</h2>
         <p className="text-slate-300 text-sm mb-4">ผู้เล่นแต่ละคนจ่ายค่าสนามแค่ครั้งเดียวต่อวัน (เกมแรกที่ลง) ส่วนค่าลูกคิดเต็มตามทุกเกมที่เล่นจริง ไม่หารเฉลี่ย</p>
 
-        <div className="bg-slate-950 rounded-xl p-3 border-2 border-slate-700/50 mb-4">
-          <p className="text-xs text-slate-300 mb-2 flex items-center gap-1"><Settings className="w-3.5 h-3.5" /> ตั้งราคาของวันนี้ (คำนวณย้อนหลังทุกเกมของวันนี้ทันที ไม่กระทบวันก่อนหน้า)</p>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-xs text-slate-300">
-              ค่าคอร์ท/เกม (บาท)
-              <div className="mt-1 flex items-center gap-1">
-                <input type="text" inputMode="numeric" value={courtFeeInput ?? String(todayPrice.courtFee)}
-                  onChange={(e) => setCourtFee(e.target.value.replace(/[^0-9]/g, ''))}
-                  className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
-                <div className="flex flex-col shrink-0">
-                  <button type="button" onClick={() => bumpCourtFee(1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 border-b-0 rounded-t text-slate-300 hover:text-cyan-400"><ChevronUp className="w-3 h-3" /></button>
-                  <button type="button" onClick={() => bumpCourtFee(-1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 rounded-b text-slate-300 hover:text-cyan-400"><ChevronDown className="w-3 h-3" /></button>
-                </div>
-              </div>
-            </label>
-            <label className="text-xs text-slate-300">
-              ค่าลูกแบด/ลูก (บาท)
-              <div className="mt-1 flex items-center gap-1">
-                <input type="text" inputMode="numeric" value={shuttlePriceInput ?? String(todayPrice.shuttlePrice)}
-                  onChange={(e) => setShuttlePrice(e.target.value.replace(/[^0-9]/g, ''))}
-                  className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
-                <div className="flex flex-col shrink-0">
-                  <button type="button" onClick={() => bumpShuttlePrice(1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 border-b-0 rounded-t text-slate-300 hover:text-cyan-400"><ChevronUp className="w-3 h-3" /></button>
-                  <button type="button" onClick={() => bumpShuttlePrice(-1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 rounded-b text-slate-300 hover:text-cyan-400"><ChevronDown className="w-3 h-3" /></button>
-                </div>
-              </div>
-            </label>
-          </div>
-        </div>
-
         <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
           <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">เกมที่เล่นจบ</span><span className="font-mono text-white">{todayRecords.length} เกม</span></div>
           <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">ลูกแบดรวม</span><span className="font-mono text-white">{totalShuttles} ลูก</span></div>
@@ -2526,6 +2530,36 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
             </div>
           </div>
         )}
+      </div>
+
+      <div className="bg-slate-950 rounded-xl p-3 border-2 border-slate-700/50">
+        <p className="text-xs text-slate-300 mb-2 flex items-center gap-1"><Settings className="w-3.5 h-3.5" /> ตั้งราคาของวันนี้ (คำนวณย้อนหลังทุกเกมของวันนี้ทันที ไม่กระทบวันก่อนหน้า)</p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-xs text-slate-300">
+            ค่าคอร์ท/เกม (บาท)
+            <div className="mt-1 flex items-center gap-1">
+              <input type="text" inputMode="numeric" value={courtFeeInput ?? String(todayPrice.courtFee)}
+                onChange={(e) => setCourtFee(e.target.value.replace(/[^0-9]/g, ''))}
+                className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              <div className="flex flex-col shrink-0">
+                <button type="button" onClick={() => bumpCourtFee(1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 border-b-0 rounded-t text-slate-300 hover:text-cyan-400"><ChevronUp className="w-3 h-3" /></button>
+                <button type="button" onClick={() => bumpCourtFee(-1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 rounded-b text-slate-300 hover:text-cyan-400"><ChevronDown className="w-3 h-3" /></button>
+              </div>
+            </div>
+          </label>
+          <label className="text-xs text-slate-300">
+            ค่าลูกแบด/ลูก (บาท)
+            <div className="mt-1 flex items-center gap-1">
+              <input type="text" inputMode="numeric" value={shuttlePriceInput ?? String(todayPrice.shuttlePrice)}
+                onChange={(e) => setShuttlePrice(e.target.value.replace(/[^0-9]/g, ''))}
+                className="w-full bg-slate-900 border-2 border-slate-700/60 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              <div className="flex flex-col shrink-0">
+                <button type="button" onClick={() => bumpShuttlePrice(1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 border-b-0 rounded-t text-slate-300 hover:text-cyan-400"><ChevronUp className="w-3 h-3" /></button>
+                <button type="button" onClick={() => bumpShuttlePrice(-1)} className="w-6 h-4 flex items-center justify-center bg-slate-900 border-2 border-slate-700/60 rounded-b text-slate-300 hover:text-cyan-400"><ChevronDown className="w-3 h-3" /></button>
+              </div>
+            </div>
+          </label>
+        </div>
       </div>
     </div>
   );
@@ -2956,7 +2990,7 @@ export default function IbabadApp() {
   const profilePlayer = useMemo(() => players.find(p => p.id === profileId), [players, profileId]);
   const pairStats = useMemo(() => computePairStats(matchRecords), [matchRecords]);
   const togetherCounts = useMemo(() => buildTogetherCounts(matchRecords), [matchRecords]);
-  const todayGroupStats = useMemo(() => buildTodayGroupStats(matchRecords, players), [matchRecords, players]);
+  const todayGroupStats = useMemo(() => buildTodayGroupStats(matchRecords, players, courts), [matchRecords, players, courts]);
   const todayLukpatLowerGames = useMemo(() => countLukpatLowerGamesToday(matchRecords, players), [matchRecords, players]);
   const consecutiveCounts = useMemo(() => {
     const map = {};
