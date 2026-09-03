@@ -2771,7 +2771,12 @@ export default function IbabadApp() {
       if (!rp) return lp;
       return (rp.played || 0) > (lp.played || 0) ? rp : lp;
     });
-    return { ...local, matchRecords: matchRecordsMerged, players: playersMerged };
+    // วันเข้าร่วม: รวมกันแบบ union ต่อคนต่อวัน (ไม่ใช่เขียนทับ) — กันไม่ให้แต้มเข้าร่วมที่อีกเครื่องเพิ่งบันทึกไว้หายไปตอนเครื่องนี้บันทึกทับ
+    const attendanceMerged = { ...(remote.attendance || {}) };
+    Object.keys(local.attendance || {}).forEach(pid => {
+      attendanceMerged[pid] = { ...(attendanceMerged[pid] || {}), ...(local.attendance[pid] || {}) };
+    });
+    return { ...local, matchRecords: matchRecordsMerged, players: playersMerged, attendance: attendanceMerged };
   };
 
   useEffect(() => {
@@ -2798,8 +2803,8 @@ export default function IbabadApp() {
         lastKnownUpdatedAt.current = data.updated_at;
         lastLocalWriteAt.current = Date.now();
         setSyncError(null);
-        // ถ้าผสานแล้วต่างจากของเครื่องนี้ตอนนี้ (เช่น ได้เกม/ผู้เล่นจากอีกเครื่องมาเพิ่ม) อัปเดต state เครื่องนี้ให้ตรงด้วย
-        if (merged.matchRecords.length !== matchRecords.length || merged.players.some((p, i) => p !== players[i])) {
+        // ถ้าผสานแล้วต่างจากของเครื่องนี้ตอนนี้ (เช่น ได้เกม/ผู้เล่น/วันเข้าร่วมจากอีกเครื่องมาเพิ่ม) อัปเดต state เครื่องนี้ให้ตรงด้วย
+        if (merged.matchRecords.length !== matchRecords.length || merged.players.some((p, i) => p !== players[i]) || merged.attendance !== attendance) {
           applyRemoteState(merged);
         }
       } else if (error) {
