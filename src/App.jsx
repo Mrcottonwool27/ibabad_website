@@ -2217,7 +2217,7 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                           </div>
                           {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded mt-1 border-2 w-fit ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
                         </div>
-                        <span className={`absolute bottom-1.5 right-1.5 text-lg font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
+                        <span className={`absolute top-1 left-1.5 text-xs font-bold ${p.gender === 'F' ? 'text-pink-400' : 'text-blue-400'}`}>{p.gender === 'F' ? '♀' : '♂'}</span>
                       </div>
                     ) : <span className="text-xs text-slate-300 font-medium">+ วางผู้เล่น</span>}
                     {editable && (
@@ -2256,8 +2256,8 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
             const cooling = isInAICooldown(p.id, matchRecords);
             const cooldownMinsLeft = cooling ? Math.ceil((AI_COOLDOWN_MS - (Date.now() - lastFinishedAt(p.id, matchRecords))) / 60000) : 0;
             return (
-              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))}
-                className={`border-2 p-3 rounded-xl cursor-grab active:cursor-grabbing touch-none select-none group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
+              <div key={p.id}
+                className={`border-2 p-3 rounded-xl group transition-all ${isResting ? 'bg-slate-950/50 border-amber-600 opacity-60' : 'bg-slate-950 border-slate-700/50 hover:border-cyan-500/50'}`}>
                 <div className="flex items-center gap-3">
                   <Avatar player={p} size="w-14 h-14" textSize="text-2xl" />
                   <div className="min-w-0 flex-1">
@@ -2274,7 +2274,12 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
                     <p className="text-xs text-slate-300 mt-1">เล่นแล้ว {todayGroupStats[p.id]?.totalGames || 0} เกม</p>
                   </div>
                   <div className="flex flex-col items-center gap-2 shrink-0">
-                  <button onClick={() => onOpenProfile(p.id)} className="text-cyan-500 hover:text-cyan-400"><Info className="w-6 h-6" /></button>
+                  <div className="flex items-center gap-1.5">
+                    <button onPointerDown={(e) => beginPointerDrag(e, () => startDragFromWaiting(p))} title="ลากเพื่อย้าย" className="text-slate-300 hover:text-cyan-400 touch-none cursor-grab active:cursor-grabbing">
+                      <Hand className="w-5 h-5" />
+                    </button>
+                    <button onClick={() => onOpenProfile(p.id)} className="text-cyan-500 hover:text-cyan-400"><Info className="w-6 h-6" /></button>
+                  </div>
                   <button
                     onClick={() => onToggleResting(p.id)}
                     title={isResting ? 'พร้อมเล่น' : 'พักก่อน'}
@@ -2331,10 +2336,13 @@ function AdminPage({ players, checkedInIds, courts, setCourts, onGameEnd, onOpen
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {playingPlayers.map(p => (
-              <div key={p.id} onPointerDown={(e) => beginPointerDrag(e, () => startDragFromPlaying(p))}
-                className="border-2 p-3 rounded-xl flex items-center gap-3 cursor-grab active:cursor-grabbing touch-none select-none bg-emerald-950/20 border-emerald-700/40 hover:border-emerald-500/60">
+              <div key={p.id} className="border-2 p-3 rounded-xl flex items-center gap-3 relative bg-emerald-950/20 border-emerald-700/40 hover:border-emerald-500/60">
+                <button onPointerDown={(e) => beginPointerDrag(e, () => startDragFromPlaying(p))} title="ลากเพื่อย้าย"
+                  className="absolute top-2 right-2 text-slate-300 hover:text-emerald-400 touch-none cursor-grab active:cursor-grabbing">
+                  <Hand className="w-4 h-4" />
+                </button>
                 <Avatar player={p} size="w-12 h-12" textSize="text-xl" />
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 pr-5">
                   <p className="font-bold text-sm text-white truncate">{p.name}</p>
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     {showTierInfo && <span className={`text-xs font-bold px-1.5 py-0.5 rounded border-2 ${clsColor(p.cls)}`}>มือ {p.cls}</span>}
@@ -2489,27 +2497,6 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
 
   return (
     <div className="space-y-6">
-      <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl p-6 relative overflow-hidden">
-        <div className="absolute left-0 bottom-0 w-1 h-full bg-gradient-to-b from-cyan-600 to-cyan-500" />
-        <h2 className="text-xl font-black text-white mb-1">สรุปค่าใช้จ่ายวันนี้</h2>
-        <p className="text-slate-300 text-sm mb-4">ผู้เล่นแต่ละคนจ่ายค่าสนามแค่ครั้งเดียวต่อวัน (เกมแรกที่ลง) ส่วนค่าลูกคิดเต็มตามทุกเกมที่เล่นจริง ไม่หารเฉลี่ย</p>
-
-        <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
-          <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">เกมที่เล่นจบ</span><span className="font-mono text-white">{todayRecords.length} เกม</span></div>
-          <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">ลูกแบดรวม</span><span className="font-mono text-white">{totalShuttles} ลูก</span></div>
-        </div>
-        <div className="flex items-end gap-2">
-          <span className="text-3xl font-black text-cyan-600 font-mono">฿{collected}</span>
-          <span className="text-slate-300 mb-1">/ ฿{totalExpected}</span>
-        </div>
-        <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border-2 border-slate-700/50 mt-2">
-          <div className="h-full bg-gradient-to-r from-cyan-600 to-blue-500" style={{ width: totalExpected ? `${(collected / totalExpected) * 100}%` : '0%' }} />
-        </div>
-        <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
-          <div className="bg-slate-950 rounded-lg p-3 border-2 border-emerald-700/40 flex justify-between"><span className="text-emerald-400">เงินสด</span><span className="font-mono text-white">฿{cashCollected}</span></div>
-          <div className="bg-slate-950 rounded-lg p-3 border-2 border-cyan-700/40 flex justify-between"><span className="text-cyan-400">เงินโอน</span><span className="font-mono text-white">฿{transferCollected}</span></div>
-        </div>
-      </div>
       <div className="space-y-6">
         {dues.length === 0 && <p className="text-sm text-cyan-500 text-center py-6">ยังไม่มีใครลงเล่นวันนี้ — ไปจัดคู่ในหน้าแอดมินก่อนนะคะ</p>}
 
@@ -2530,6 +2517,28 @@ function FinancePage({ players, matchRecords, paidMap, onMarkPaid, onUnmarkPaid,
             </div>
           </div>
         )}
+      </div>
+
+      <div className="bg-slate-900 border-2 border-slate-700/60 rounded-2xl p-6 relative overflow-hidden">
+        <div className="absolute left-0 bottom-0 w-1 h-full bg-gradient-to-b from-cyan-600 to-cyan-500" />
+        <h2 className="text-xl font-black text-white mb-1">สรุปค่าใช้จ่ายวันนี้</h2>
+        <p className="text-slate-300 text-sm mb-4">ผู้เล่นแต่ละคนจ่ายค่าสนามแค่ครั้งเดียวต่อวัน (เกมแรกที่ลง) ส่วนค่าลูกคิดเต็มตามทุกเกมที่เล่นจริง ไม่หารเฉลี่ย</p>
+
+        <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+          <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">เกมที่เล่นจบ</span><span className="font-mono text-white">{todayRecords.length} เกม</span></div>
+          <div className="bg-slate-950 rounded-lg p-3 border-2 border-slate-700/50 flex justify-between"><span className="text-slate-300">ลูกแบดรวม</span><span className="font-mono text-white">{totalShuttles} ลูก</span></div>
+        </div>
+        <div className="flex items-end gap-2">
+          <span className="text-3xl font-black text-cyan-600 font-mono">฿{collected}</span>
+          <span className="text-slate-300 mb-1">/ ฿{totalExpected}</span>
+        </div>
+        <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border-2 border-slate-700/50 mt-2">
+          <div className="h-full bg-gradient-to-r from-cyan-600 to-blue-500" style={{ width: totalExpected ? `${(collected / totalExpected) * 100}%` : '0%' }} />
+        </div>
+        <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
+          <div className="bg-slate-950 rounded-lg p-3 border-2 border-emerald-700/40 flex justify-between"><span className="text-emerald-400">เงินสด</span><span className="font-mono text-white">฿{cashCollected}</span></div>
+          <div className="bg-slate-950 rounded-lg p-3 border-2 border-cyan-700/40 flex justify-between"><span className="text-cyan-400">เงินโอน</span><span className="font-mono text-white">฿{transferCollected}</span></div>
+        </div>
       </div>
 
       <div className="bg-slate-950 rounded-xl p-3 border-2 border-slate-700/50">
