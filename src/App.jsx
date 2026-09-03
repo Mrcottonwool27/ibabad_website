@@ -733,6 +733,15 @@ function formatThaiTime(timestamp) {
 function dayKeyOf(timestamp) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date(timestamp));
 }
+// นับจำนวนวันที่เข้าร่วมจริง — อิงจากประวัติการแข่ง (ประวัติ) โดยตรง นับวันที่ไม่ซ้ำที่คนนี้มีชื่ออยู่ในเกมอย่างน้อย 1 เกม
+// ใช้แทนตัวนับเช็คอินเดิมที่แยกเก็บต่างหาก เพื่อให้เข้าร่วมตรงกับสิ่งที่เห็นจริงในหน้าประวัติเสมอ ไม่มีทางเพี้ยน/ไม่ตรงกัน
+function attendanceDaysFromHistory(playerId, matchRecords) {
+  const days = new Set();
+  matchRecords.forEach(r => {
+    if (r.playerIds?.includes(playerId)) days.add(dayKeyOf(r.timestamp));
+  });
+  return days.size;
+}
 function formatThaiDateLong(dayKey) {
   return new Intl.DateTimeFormat('th-TH-u-ca-gregory', {
     timeZone: 'UTC', day: '2-digit', month: 'long', year: 'numeric', weekday: 'long',
@@ -1149,12 +1158,12 @@ function DeleteConfirmModal({ player, onConfirm, onClose }) {
   );
 }
 
-function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer, attendance, onManualDayReset, showTierInfo, onToggleTierInfo }) {
+function CheckInPage({ players, checkedInIds, onToggleCheckIn, onOpenProfile, onAddPlayer, onEditPlayer, onDeletePlayer, matchRecords, onManualDayReset, showTierInfo, onToggleTierInfo }) {
   const [query, setQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const attendanceCount = (id) => Object.keys(attendance[id] || {}).length;
+  const attendanceCount = (id) => attendanceDaysFromHistory(id, matchRecords);
   const filtered = players
     .filter(p => !checkedInIds.includes(p.id))
     .filter(p => p.name.toLowerCase().includes(query.trim().toLowerCase()))
@@ -1732,12 +1741,12 @@ function HistoryPage({ matchRecords, players, onEditResult, dailyPrices, onDelet
 /* ---------------------------------------------------------
    LEADERBOARD
 --------------------------------------------------------- */
-function LeaderboardPage({ players, attendance, onEditPlayer, onOpenProfile }) {
+function LeaderboardPage({ players, matchRecords, onEditPlayer, onOpenProfile }) {
   const [sortBy, setSortBy] = useState('power'); // 'power' | 'cls' | 'winrate' | 'attendance' | 'name'
   const [sortDir, setSortDir] = useState('desc'); // 'desc' | 'asc'
   const [editTarget, setEditTarget] = useState(null);
 
-  const attendanceCount = (id) => Object.keys(attendance[id] || {}).length;
+  const attendanceCount = (id) => attendanceDaysFromHistory(id, matchRecords);
   const winRateOf = (p) => (p.played ? p.w / p.played : 0);
 
   const sortOptions = [
@@ -3099,9 +3108,9 @@ export default function IbabadApp() {
 
       <main className="flex-1 pb-24 md:pb-0">
         <div className="p-4 md:p-8 max-w-6xl mx-auto">
-          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} attendance={attendance} onManualDayReset={manualDayReset} showTierInfo={showTierInfo} onToggleTierInfo={toggleTierInfo} />}
+          {tab === 'home' && <CheckInPage players={players} checkedInIds={checkedInIds} onToggleCheckIn={toggleCheckIn} onOpenProfile={setProfileId} onAddPlayer={addPlayer} onEditPlayer={editPlayer} onDeletePlayer={deletePlayer} matchRecords={matchRecords} onManualDayReset={manualDayReset} showTierInfo={showTierInfo} onToggleTierInfo={toggleTierInfo} />}
           {tab === 'admin' && <AdminPage players={players} checkedInIds={checkedInIds} courts={courts} setCourts={setCourts} onGameEnd={handleGameEnd} onOpenProfile={setProfileId} pairStats={pairStats} togetherCounts={togetherCounts} todayGroupStats={todayGroupStats} todayLukpatLowerGames={todayLukpatLowerGames} consecutiveCounts={consecutiveCounts} restingIds={restingIds} onToggleResting={toggleResting} paidMap={paidMap} matchRecords={matchRecords} showTierInfo={showTierInfo} onToggleTierInfo={toggleTierInfo} />}
-          {tab === 'board' && <LeaderboardPage players={players} attendance={attendance} onEditPlayer={editPlayer} onOpenProfile={setProfileId} />}
+          {tab === 'board' && <LeaderboardPage players={players} matchRecords={matchRecords} onEditPlayer={editPlayer} onOpenProfile={setProfileId} />}
           {tab === 'finance' && <FinancePage players={players} matchRecords={matchRecords} paidMap={paidMap} onMarkPaid={markPaid} onUnmarkPaid={unmarkPaid} dailyPrices={dailyPrices} onChangeTodayPrice={changeTodayPrice} costOverrides={costOverrides} onSetCostOverride={setCostOverride} />}
           {tab === 'history' && <HistoryPage matchRecords={matchRecords} players={players} onEditResult={editMatchResult} dailyPrices={dailyPrices} onDeleteDay={deleteDayRecords} onDeleteMatch={deleteMatchRecord} />}
         </div>
